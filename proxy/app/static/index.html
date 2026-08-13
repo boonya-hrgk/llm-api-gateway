@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM API Gateway</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- 登录视图 -->
+  <div id="login-view" class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">
+        <span class="logo-dot"></span>
+        <h1>LLM API Gateway</h1>
+      </div>
+      <p class="login-sub">大模型 API 代理 · sk 授权管理</p>
+      <form id="login-form" class="login-form">
+        <label class="field">
+          <span>MASTER_KEY</span>
+          <input type="password" id="login-key" placeholder="输入管理密钥" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">登 录</button>
+        <p id="login-error" class="login-error" hidden></p>
+      </form>
+      <p class="login-tip">密钥仅保存在当前浏览器会话中，关闭后需重新登录。</p>
+    </div>
+  </div>
+
+  <!-- 主应用 -->
+  <div id="app-view" class="app" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="logo-dot"></span>
+        <span>LLM Gateway</span>
+      </div>
+      <nav class="nav">
+        <a href="#" class="nav-item" data-view="overview">概览</a>
+        <a href="#" class="nav-item" data-view="keys">密钥管理</a>
+        <a href="#" class="nav-item" data-view="test">调用测试</a>
+      </nav>
+      <button id="logout-btn" class="nav-item nav-logout">退出登录</button>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <h2 id="page-title">概览</h2>
+        <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
+      </header>
+
+      <!-- 概览 -->
+      <section id="view-overview" class="view">
+        <div class="cards" id="stat-cards">
+          <div class="card stat"><div class="stat-num" id="stat-total">-</div><div class="stat-label">密钥总数</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-active">-</div><div class="stat-label">活跃密钥</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-revoked">-</div><div class="stat-label">已吊销</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-calls">-</div><div class="stat-label">累计调用</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>最近密钥</h3></div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>前缀</th><th>名称</th><th>状态</th><th>调用次数</th><th>创建时间</th></tr></thead>
+              <tbody id="overview-tbody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 密钥管理 -->
+      <section id="view-keys" class="view" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h3>API 密钥</h3>
+            <button class="btn btn-primary" id="create-key-btn">+ 新建密钥</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>ID</th><th>前缀</th><th>名称</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th>调用次数</th><th>操作</th></tr></thead>
+              <tbody id="keys-tbody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 调用测试 -->
+      <section id="view-test" class="view" hidden>
+        <div class="test-grid">
+          <div class="card">
+            <div class="card-head"><h3>请求参数</h3></div>
+            <div class="form-rows">
+              <label class="field"><span>API Key</span>
+                <input type="password" id="test-key" placeholder="sk-xxxx" />
+              </label>
+              <label class="field"><span>模型</span>
+                <input type="text" id="test-model" placeholder="如 deepseek-coder-33b-instruct-AWQ" />
+              </label>
+              <label class="field"><span>Prompt</span>
+                <textarea id="test-prompt" rows="6" placeholder="输入你的提问…">你好，请用一句话介绍你自己。</textarea>
+              </label>
+              <label class="field"><span>Temperature</span>
+                <input type="number" id="test-temp" value="0.7" step="0.1" min="0" max="2" />
+              </label>
+              <label class="check-row"><input type="checkbox" id="test-stream" checked /> 流式输出 (stream)</label>
+              <button class="btn btn-primary btn-block" id="test-send">发送请求</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>响应</h3><button class="btn btn-ghost btn-sm" id="test-clear">清空</button></div>
+            <pre id="test-output" class="output">点击「发送请求」查看结果。</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 新建密钥模态框 -->
+  <div id="modal-create" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="card-head"><h3>新建 API 密钥</h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body">
+        <label class="field"><span>名称（可选）</span>
+          <input type="text" id="create-name" placeholder="如：内部测试" />
+        </label>
+        <label class="field"><span>过期时间（可选，ISO8601）</span>
+          <input type="text" id="create-expires" placeholder="如 2026-12-31T23:59:59" />
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close>取消</button>
+        <button class="btn btn-primary" id="create-submit">生成密钥</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 展示明文 key 模态框 -->
+  <div id="modal-key" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="card-head"><h3>密钥已生成</h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body">
+        <p class="warn-text">请立即复制保存，此明文密钥仅显示一次，丢失后需重新生成。</p>
+        <div class="key-box">
+          <code id="new-key-text"></code>
+          <button class="btn btn-ghost btn-sm" id="copy-key">复制</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" data-close>我已保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
