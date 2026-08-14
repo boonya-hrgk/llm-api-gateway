@@ -68,9 +68,12 @@ llm-proxy-tk/
 │   │   ├── db.py          # SQLite 数据访问层
 │   │   ├── schemas.py     # Pydantic 请求/响应模型
 │   │   └── static/        # Web 管理界面（HTML/JS/CSS）
+│   ├── main.py            # 一键启动入口：python main.py
+│   ├── .env.example       # 配置文件模板
 │   └── requirements.txt
 ├── Dockerfile
 ├── docker-run.example.sh  # 启动示例脚本
+├── fix-docker-mirror.ps1  # Docker 镜像源修复脚本
 └── .dockerignore
 ```
 
@@ -78,35 +81,61 @@ llm-proxy-tk/
 
 ### 方式一：Docker 部署（推荐）
 
-1. 构建镜像并启动容器：
+1. 构建镜像：
 
-```bash
+```powershell
 docker build -t llm-api-gateway .
+```
 
-docker run -d \
-  --name llm-api-gateway \
-  -p 9000:9000 \
-  -e MASTER_KEY=change-me-master \
-  -e VLLM_TARGET_URL=http://host.docker.internal:8000 \
-  -e UPSTREAM_API_KEY=optional-upstream-key \
-  -v "$(pwd)/data:/app/data" \
-  --restart unless-stopped \
+2. 启动容器（PowerShell）：
+
+```powershell
+docker run -d `
+  --name llm-api-gateway `
+  -p 9000:9000 `
+  -e MASTER_KEY=change-me-master `
+  -e VLLM_TARGET_URL=http://host.docker.internal:8000 `
+  -e UPSTREAM_API_KEY=optional-upstream-key `
+  -v "${PWD}/data:/app/data" `
+  --restart unless-stopped `
   llm-api-gateway
 ```
 
-2. 访问管理界面：<http://localhost:9000>
+或使用 CMD（命令提示符）：
 
-### 方式二：本地运行
-
-```bash
-cd proxy
-pip install -r requirements.txt
-
-export MASTER_KEY=change-me-master
-export VLLM_TARGET_URL=http://127.0.0.1:8000
-
-uvicorn app.main:app --host 0.0.0.0 --port 9000
+```cmd
+docker run -d ^
+  --name llm-api-gateway ^
+  -p 9000:9000 ^
+  -e MASTER_KEY=change-me-master ^
+  -e VLLM_TARGET_URL=http://host.docker.internal:8000 ^
+  -e UPSTREAM_API_KEY=optional-upstream-key ^
+  -v "%cd%/data:/app/data" ^
+  --restart unless-stopped ^
+  llm-api-gateway
 ```
+
+3. 访问管理界面：<http://localhost:9000>
+
+### 方式二：本地运行（推荐，最简单）
+
+**第一步**：复制配置文件并修改
+
+```powershell
+cd proxy
+Copy-Item .env.example .env
+```
+
+然后用记事本打开 `.env` 文件，把 `MASTER_KEY` 改成你自己的密码，把 `VLLM_TARGET_URL` 改成你的大模型服务地址。
+
+**第二步**：安装依赖并启动
+
+```powershell
+pip install -r requirements.txt
+python main.py
+```
+
+启动成功后访问 <http://localhost:9000> 即可。
 
 ## 环境变量
 
@@ -186,6 +215,67 @@ curl -X POST http://localhost:9000/admin/keys \
 - **前缀脱敏**：列表与查询接口仅返回 `sk-ab12****` 形式的前缀。
 - **管理接口隔离**：`/admin/*` 与 `/v1/*` 使用独立密钥体系，互不影响。
 - **过期与吊销**：过期或被吊销的密钥立即失效，无法继续调用。
+
+## 常见问题
+
+### Q1: `pip install` 报错 `check_hostname requires server_hostname`
+
+**原因**：系统开了代理软件，代理格式异常导致 pip 崩溃。
+
+**解决**：
+
+```powershell
+# 临时清除当前窗口的代理变量
+$env:HTTP_PROXY = $null
+$env:HTTPS_PROXY = $null
+$env:http_proxy = $null
+$env:https_proxy = $null
+$env:NO_PROXY = "*"
+
+# 用清华源安装
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+如果还是不行，打开 `Internet 选项` → `连接` → `局域网设置`，取消代理勾选后重启 PowerShell。
+
+### Q2: 启动报错 `端口被占用` (error 10048)
+
+**原因**：9000 端口已经被其他程序占了。
+
+**解决一：杀掉占用进程**
+
+```powershell
+netstat -ano | findstr :9000
+taskkill /F /PID 进程号
+```
+
+**解决二：换个端口**
+
+在 `.env` 文件里加一行：
+
+```
+PROXY_PORT=9001
+```
+
+然后重新 `python main.py`，访问 <http://localhost:9001>。
+
+### Q3: 创建密钥后弹窗里明文是空的
+
+**原因**：旧版本的服务还在运行，代码修复未生效。
+
+**解决**：杀掉旧进程，重新 `python main.py` 启动新版本。
+
+### Q4: Docker 构建失败 `403 Forbidden`
+
+**原因**：Docker 镜像加速器（如阿里云）已失效。
+
+**解决**：运行项目根目录下的修复脚本：
+
+```powershell
+.\fix-docker-mirror.ps1
+```
+
+按提示选择中科大镜像源，然后重启 Docker Desktop 再构建。
 
 ## 许可证
 

@@ -1,6 +1,6 @@
 """反向代理路由：把 /v1/* 透传到上游大模型服务，支持流式 SSE。
 
-所有 /v1/* 请求必须通过 verify_api_key 鉴权。
+所有 /v1/* 请求必须通过 verify_api_key 鉴权，按 key 绑定的上游转发。
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from . import db
 from .auth import verify_api_key
 from .config import settings
 
@@ -35,21 +36,20 @@ _DROP_REQ_HEADERS = {
 }
 
 
-def _target_url(path: str, request: Request) -> str:
-    base = settings.vllm_target_url.rstrip("/")
+def _target_url(base: str, path: str, request: Request) -> str:
     query = request.url.query
     suffix = f"?{query}" if query else ""
     return f"{base}/v1/{path}{suffix}"
 
 
-def _build_upstream_headers(request: Request) -> dict[str, str]:
+def _build_upstream_headers(request: Request, upstream_api_key: str = "") -> dict[str, str]:
     headers: dict[str, str] = {}
     for key, value in request.headers.items():
         if key.lower() in _DROP_REQ_HEADERS:
             continue
         headers[key] = value
-    if settings.upstream_api_key:
-        headers["Authorization"] = f"Bearer {settings.upstream_api_key}"
+    if upstream_api_key:
+        headers["Authorization"] = f"Bearer {upstream_api_key}"
     return headers
 
 
@@ -88,12 +88,18 @@ async def _stream_upstream(
 
 @router.get("/health")
 async def health() -> dict:
-    """健康检查：探测上游 /health，不可达时返回 502。"""
-    url = f"{settings.vllm_target_url.rstrip('/')}/health"
+    """健康检查：探测默认上游 /health，不可达时返回 502。"""
+    default = await db.get_default_upstream()
+    if not default:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="未配置默认上游",
+        )
+    url = f"{default['base_url']}/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(url)
-        return {"status": "ok", "upstream_status": r.status_code}
+        return {"status": "ok", "upstream_status": r.status_code, "upstream": default["name"]}
     except httpx.HTTPError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -104,11 +110,16 @@ async def health() -> dict:
 @router.api_route(
     "/v1/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    dependencies=[Depends(verify_api_key)],
 )
-async def proxy(path: str, request: Request) -> StreamingResponse:
-    url = _target_url(path, request)
-    headers = _build_upstream_headers(request)
+async def proxy(path: str, request: Request, key_record: dict = Depends(verify_api_key)) -> StreamingResponse:
+    upstream = await db.get_upstream_for_key(key_record["id"])
+    if not upstream:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="未找到可用的上游配置",
+        )
+    url = _target_url(upstream["base_url"], path, request)
+    headers = _build_upstream_headers(request, upstream.get("api_key", ""))
     body = await request.body()
     if not body:
         body = None

@@ -13,26 +13,38 @@ from .config import settings
 from .proxy import router as proxy_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("llm-gateway")
+logger = logging.getLogger("ai-gateway")
 
 app = FastAPI(
-    title="LLM API Gateway",
-    description="大模型 API 代理 + sk 授权管理",
-    version="1.0.0",
+    title="AI Gateway 授权管理系统",
+    description="大模型 API 网关 · 密钥管理 · 用量统计",
+    version="1.1.0",
 )
 
 
 @app.on_event("startup")
 async def _startup() -> None:
-    if not settings.master_key:
-        logger.warning(
-            "未配置 MASTER_KEY，/admin/* 与 Web 登录将不可用。"
-            "请用 -e MASTER_KEY=xxx 指定。"
-        )
-    else:
-        logger.info("MASTER_KEY 已配置，管理接口可用。")
     await db.init_db()
     logger.info("数据库已初始化: %s", settings.db_file)
+
+    created = await db.init_default_admin()
+    if created:
+        logger.warning(
+            "已创建默认管理员账号: %s / %s",
+            settings.default_admin_username,
+            settings.default_admin_password,
+        )
+        logger.warning("请登录后及时修改默认密码！")
+    else:
+        logger.info("管理员账号已存在")
+
+    if not settings.jwt_secret:
+        logger.warning(
+            "未配置 JWT_SECRET，每次启动会自动生成随机值，"
+            "重启后所有已登录用户将失效。"
+            "生产环境请务必配置 JWT_SECRET。"
+        )
+
     logger.info("上游目标: %s", settings.vllm_target_url)
 
 
@@ -40,10 +52,10 @@ async def _startup() -> None:
 async def info() -> dict:
     """返回网关基本信息（不涉密）。"""
     return {
-        "name": "LLM API Gateway",
-        "version": "1.0.0",
+        "name": "AI Gateway 授权管理系统",
+        "version": "1.1.0",
         "target": settings.vllm_target_url,
-        "admin_enabled": bool(settings.master_key),
+        "admin_enabled": True,
     }
 
 
