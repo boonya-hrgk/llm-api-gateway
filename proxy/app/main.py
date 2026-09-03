@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from . import db
@@ -57,6 +57,16 @@ async def info() -> dict:
         "target": settings.vllm_target_url,
         "admin_enabled": True,
     }
+
+
+@app.middleware("http")
+async def _no_store_admin(request: Request, call_next):
+    """管理后台 API 动态数据（密钥列表/reveal 等）禁止任何缓存，
+    避免浏览器缓存陈旧密钥状态导致误报（如 410）。"""
+    resp = await call_next(request)
+    if request.url.path.startswith("/admin/") or request.url.path.startswith("/admin"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # 1) 先注册 API 路由，确保优先于静态资源匹配

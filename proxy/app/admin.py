@@ -9,6 +9,7 @@ from .auth import create_admin_jwt, require_admin, verify_admin_jwt
 from .schemas import (
     KeyCreateRequest,
     KeyListItem,
+    KeyRenameRequest,
     LoginRequest,
     LoginResponse,
     Message,
@@ -73,6 +74,19 @@ async def create_key(body: KeyCreateRequest) -> JSONResponse:
             raise HTTPException(status_code=400, detail="上游不存在")
     record = await db.create_key(body.name, body.expires_at, body.upstream_id)
     return JSONResponse(content=record)
+
+
+@_admin_router.patch("/keys/{key_id}", response_model=KeyListItem)
+async def rename_key(key_id: int, body: KeyRenameRequest) -> dict:
+    """仅修改密钥备注名称。用量统计按 key 聚合，改名后历史记录一并显示新名称。"""
+    name = (body.name or "").strip() or None
+    ok = await db.rename_key(key_id, name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="密钥不存在")
+    updated = await db.get_key(key_id)
+    if not updated:
+        raise HTTPException(status_code=500, detail="更新失败")
+    return updated
 
 
 @_admin_router.delete("/keys/{key_id}", response_model=Message)

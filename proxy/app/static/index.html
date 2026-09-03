@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Gateway 授权管理系统</title>
-  <link rel="stylesheet" href="/styles.css?v=20260903e" />
+  <link rel="stylesheet" href="/styles.css?v=20260903j" />
 </head>
 <body>
   <!-- 登录视图 -->
@@ -61,7 +61,10 @@
     <main class="content">
       <header class="topbar">
         <h2 id="page-title">概览</h2>
-        <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
+        <div class="topbar-actions">
+          <button id="clear-cache-btn" class="btn btn-ghost btn-sm" title="清除浏览器缓存并刷新页面">清缓存</button>
+          <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
+        </div>
       </header>
 
       <!-- 概览 -->
@@ -250,6 +253,28 @@
     </div>
   </div>
 
+  <!-- 编辑密钥名称模态框 -->
+  <div id="modal-key-rename" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="card-head"><h3>编辑密钥名称</h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="key-rename-id" />
+        <div class="field"><span>密钥</span>
+          <code id="key-rename-prefix" class="muted-key"></code>
+        </div>
+        <label class="field"><span>名称</span>
+          <input type="text" id="key-rename-name" placeholder="如：内部测试（留空表示未命名）" maxlength="60" />
+          <span class="field-hint">仅修改备注名称，不影响 key 明文、绑定上游与调用统计；用量统计将同步显示新名称</span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close>取消</button>
+        <button class="btn btn-primary" id="key-rename-submit">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 展示明文 key 模态框（新建/重置共用） -->
   <div id="modal-key" class="modal" hidden>
     <div class="modal-mask"></div>
@@ -340,9 +365,9 @@
   <div id="toast" class="toast" hidden></div>
 
   <!-- Markdown 渲染 / 代码高亮 / HTML 净化（本地化，离线可用） -->
-  <script src="/vendor/marked.min.js?v=20260903e"></script>
-  <script src="/vendor/highlight.min.js?v=20260903e"></script>
-  <script src="/vendor/purify.min.js?v=20260903e"></script>
-  <script src="/app.js?v=20260903e"></script>
+  <script src="/vendor/marked.min.js?v=20260903j"></script>
+  <script src="/vendor/highlight.min.js?v=20260903j"></script>
+  <script src="/vendor/purify.min.js?v=20260903j"></script>
+  <script src="/app.js?v=20260903j"></script>
 </body>
 </html>

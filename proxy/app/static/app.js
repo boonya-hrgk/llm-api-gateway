@@ -19,7 +19,9 @@ async function api(path, opts = {}) {
   if (opts.withAuth !== false && getToken()) {
     headers["Authorization"] = "Bearer " + getToken();
   }
-  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  // 默认绕过浏览器 HTTP 缓存，避免读到陈旧的列表/reveal 响应（服务端 no-store 为双保险）
+  const fetchOpts = Object.assign({ cache: "no-store" }, opts, { headers });
+  const res = await fetch(path, fetchOpts);
   if (res.status === 401 && !opts._noLogout) {
     logout();
     throw new Error("未授权");
@@ -87,6 +89,27 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   }
 });
 document.getElementById("logout-btn").addEventListener("click", logout);
+
+/* ===== 清除浏览器缓存并刷新 ===== */
+document.getElementById("clear-cache-btn").addEventListener("click", async function () {
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = "清理中…";
+  try {
+    // 清掉页面注册的 CacheStorage（若有）
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (e) { /* CacheStorage 不可用则跳过 */ }
+  // api() 已默认 no-store，HTTP 缓存不会被读取；reload 会重新校验文档与带版本号的静态资源
+  try { sessionStorage.setItem("cache_cleared_toast", "1"); } catch (e) { /* 忽略 */ }
+  location.reload();
+});
+if (sessionStorage.getItem("cache_cleared_toast") === "1") {
+  try { sessionStorage.removeItem("cache_cleared_toast"); } catch (e) { /* 忽略 */ }
+  toast("浏览器缓存已清理", "success");
+}
 
 /* ===== 权限控制 ===== */
 function applyRoleVisibility() {
@@ -191,14 +214,20 @@ async function loadUpstreams() {
  * 原生 input+datalist 在输入框已有值时会把候选过滤到只剩前缀匹配的 1 项，
  * 导致"配了多个模型却只能看到一个"，因此改成自绘下拉：点开显示全部候选、可输入过滤、选中即填入。
  */
-let _chatModelOptions = [];  // 全部模型候选（去重保序）
+let _chatModelOptions = [];  // 当前上下文可选模型（去重保序；选中密钥=其所属上游的模型，未选=全部）
 let _chatModelOpen = false;  // 菜单是否展开
 let _chatModelHl = -1;       // 键盘高亮项索引
 
-function collectChatModels() {
+function collectChatModels(keyId) {
   const seen = new Set();
   const out = [];
-  (_upstreamsCache || []).forEach((u) => {
+  // 选中了密钥 → 只取该密钥所属上游的模型（发请求走的是这个上游，其它上游模型无意义）
+  let ups = _upstreamsCache || [];
+  if (keyId) {
+    const up = upstreamOfKey(keyId);
+    ups = up ? [up] : [];
+  }
+  ups.forEach((u) => {
     (u.models || []).forEach((m) => {
       const name = String(m == null ? "" : m).trim();
       if (name && !seen.has(name)) { seen.add(name); out.push(name); }
@@ -206,16 +235,19 @@ function collectChatModels() {
   });
   return out;
 }
+function currentChatKeyId() {
+  const sel = document.getElementById("chat-key");
+  const v = sel ? parseInt(sel.value, 10) : NaN;
+  return Number.isNaN(v) ? 0 : v;
+}
 function updateChatModelList() {
-  _chatModelOptions = collectChatModels();
-  if (_chatModelOpen) modelMenuRender();
+  _chatModelOptions = collectChatModels(currentChatKeyId());
+  if (_chatModelOpen) modelMenuRender(false);
 }
 function currentChatUpstream() {
-  const sel = document.getElementById("chat-key");
-  const keyId = sel ? parseInt(sel.value, 10) : NaN;
-  return upstreamOfKey(Number.isNaN(keyId) ? 0 : keyId);
+  return upstreamOfKey(currentChatKeyId());
 }
-function modelMenuRender() {
+function modelMenuRender(filterByInput = true) {
   const menu = document.getElementById("chat-model-menu");
   if (!menu) return;
   const input = document.getElementById("chat-model");
@@ -225,13 +257,18 @@ function modelMenuRender() {
   const up = currentChatUpstream();
   const pref = new Set(((up && up.models) || []).map((m) => String(m == null ? "" : m).trim()).filter(Boolean));
   const ordered = _chatModelOptions.slice().sort((a, b) => ((pref.has(a) ? 0 : 1) - (pref.has(b) ? 0 : 1)));
-  const list = q ? ordered.filter((n) => n.toLowerCase().includes(q)) : ordered;
+  // filterByInput=false（菜单打开时）：显示全部候选，不因输入框已有值被过滤；
+  // 只有用户键入时（input 事件）才按输入值过滤
+  const list = (filterByInput && q) ? ordered.filter((n) => n.toLowerCase().includes(q)) : ordered;
 
   menu.replaceChildren();
   if (!_chatModelOptions.length) {
     const p = document.createElement("div");
     p.className = "model-menu-empty";
-    p.textContent = "暂无可选模型：在上游管理中配置模型后即会出现在这里，也可以直接输入模型名";
+    const selected = Boolean(currentChatKeyId());
+    p.textContent = selected
+      ? "当前密钥所属上游未配置模型，可到上游管理添加，或直接输入模型名"
+      : "暂无可选模型：在上游管理中配置模型后即会出现在这里，也可以直接输入模型名";
     menu.appendChild(p);
   } else if (!list.length) {
     const p = document.createElement("div");
@@ -254,7 +291,7 @@ function modelMenuRender() {
 function modelMenuOpen() {
   if (_chatModelOpen) return;
   _chatModelOpen = true;
-  modelMenuRender();
+  modelMenuRender(false);  // 打开时展示全部候选，不按输入框现值过滤
   const menu = document.getElementById("chat-model-menu");
   if (menu) menu.hidden = false;
 }
@@ -309,7 +346,7 @@ function fillChatModelDefault() {
   if (!el || el.value) return;
   const first = chatFirstSuggestedModel();
   if (first) { el.value = first; _chatAutoModel = first; }
-  if (_chatModelOpen) modelMenuRender();
+  if (_chatModelOpen) modelMenuRender(false);
 }
 function applyUpstreamModelsToChat(keyId) {
   // 按密钥绑定的上游模型刷新模型输入：
@@ -326,7 +363,7 @@ function applyUpstreamModelsToChat(keyId) {
     el.value = "";
     _chatAutoModel = "";
   }
-  if (_chatModelOpen) modelMenuRender();
+  if (_chatModelOpen) modelMenuRender(false);
 }
 function upstreamOfKey(keyId) {
   const k = (_chatKeysCache || []).find((x) => x.id === keyId);
@@ -358,6 +395,7 @@ async function loadOverview() {
   }
 }
 
+let _keysCache = [];
 async function loadKeys() {
   try {
     const res = await api("/admin/keys");
@@ -379,6 +417,7 @@ function renderOverview(keys) {
 function renderKeys(keys) {
   const tb = document.getElementById("keys-tbody");
   const admin = isAdmin();
+  _keysCache = keys;
   if (!keys.length) {
     const cols = admin ? 10 : 9;
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="muted">暂无密钥</td></tr>';
@@ -390,15 +429,20 @@ function renderKeys(keys) {
       "</td><td>" + fmtTime(k.expires_at) + "</td><td>" + fmtTime(k.last_used_at) +
       "</td><td>" + (k.request_count || 0) + "</td>";
     if (admin) {
-      html += '<td>' + (k.status === "active"
-        ? '<button class="btn btn-ghost btn-sm" data-reset="' + k.id + '" title="生成新密钥替换旧值，旧 key 立即失效">重置</button>' +
-          '<button class="btn btn-danger btn-sm" data-revoke="' + k.id + '">吊销</button>'
-        : '<span class="muted">—</span>') + "</td>";
+      html += '<td>' +
+        '<button class="btn btn-ghost btn-sm" data-edit-key="' + k.id + '" title="修改备注名称">编辑</button>' +
+        (k.status === "active"
+          ? '<button class="btn btn-ghost btn-sm" data-reset="' + k.id + '" title="生成新密钥替换旧值，旧 key 立即失效">重置</button>' +
+            '<button class="btn btn-danger btn-sm" data-revoke="' + k.id + '">吊销</button>'
+          : "") + "</td>";
     }
     html += "</tr>";
     return html;
   }).join("");
 
+  tb.querySelectorAll("[data-edit-key]").forEach((btn) => {
+    btn.addEventListener("click", () => openRenameKey(parseInt(btn.dataset.editKey, 10)));
+  });
   tb.querySelectorAll("[data-reset]").forEach((btn) => {
     btn.addEventListener("click", () => resetKey(parseInt(btn.dataset.reset, 10)));
   });
@@ -518,6 +562,38 @@ async function revokeKey(id) {
     else { toast("吊销失败 (" + res.status + ")", "error"); }
   } catch (e) { toast("吊销失败：" + e.message, "error"); }
 }
+
+/* ===== 编辑密钥名称 ===== */
+function openRenameKey(id) {
+  const k = _keysCache.find((x) => x.id === id);
+  if (!k) return;
+  document.getElementById("key-rename-id").value = k.id;
+  document.getElementById("key-rename-name").value = k.name || "";
+  document.getElementById("key-rename-prefix").textContent = k.key_prefix;
+  openModal("modal-key-rename");
+}
+
+document.getElementById("key-rename-submit").addEventListener("click", async () => {
+  const id = parseInt(document.getElementById("key-rename-id").value, 10);
+  if (!id) return;
+  const raw = document.getElementById("key-rename-name").value;
+  const name = raw.trim() === "" ? null : raw.trim();
+  try {
+    const res = await api("/admin/keys/" + id, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      if (res.status === 403) { toast("权限不足", "error"); return; }
+      const err = await res.json().catch(() => ({}));
+      toast(err.detail || ("保存失败 (" + res.status + ")"), "error");
+      return;
+    }
+    closeModal("modal-key-rename");
+    toast("名称已更新", "success");
+    refreshAll();
+  } catch (e) { toast("保存失败：" + e.message, "error"); }
+});
 
 /* ===== 用量统计 ===== */
 let _statsCache = null;
@@ -1099,12 +1175,28 @@ document.getElementById("chat-key").addEventListener("change", async (e) => {
       _chatSelectedKey = data.key || "";
     } else {
       const errData = await res.json().catch(() => ({}));
-      const msg = errData.detail || ("加载失败 (" + res.status + ")");
+      let msg = errData.detail || ("加载失败 (" + res.status + ")");
+      if (res.status === 410) {
+        // 历史遗留密钥无明文：给出可操作的引导，避免死胡同
+        msg = "该密钥无明文可回显（创建于明文回显功能上线之前或数据重建过）。";
+        errEl.innerHTML = "";
+        errEl.append("⚠ 密钥加载失败：" + msg);
+        const go = document.createElement("button");
+        go.type = "button";
+        go.className = "btn btn-ghost btn-sm";
+        go.textContent = "去密钥管理重置";
+        go.style.marginLeft = "8px";
+        go.addEventListener("click", () => switchView("keys"));
+        errEl.appendChild(go);
+        errEl.hidden = false;
+        return;
+      }
       if (errEl) { errEl.textContent = "⚠ 密钥加载失败：" + msg; errEl.hidden = false; }
     }
   } catch (e) {
     if (errEl) { errEl.textContent = "⚠ 网络错误：" + e.message; errEl.hidden = false; }
   }
+  updateChatModelList();
   applyUpstreamModelsToChat(keyId);
 });
 

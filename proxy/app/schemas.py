@@ -14,6 +14,10 @@ class KeyCreateRequest(BaseModel):
     upstream_id: Optional[int] = Field(default=None, description="绑定的上游 ID，不填则使用默认上游")
 
 
+class KeyRenameRequest(BaseModel):
+    name: Optional[str] = Field(default=None, description="新的密钥备注名，空表示未命名")
+
+
 class KeyCreatedResponse(BaseModel):
     id: int
     key: str

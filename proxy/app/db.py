@@ -474,9 +474,11 @@ async def get_usage_by_key(limit: int = 10) -> list[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT key_id, key_prefix, key_name, COUNT(*) AS call_count
-               FROM usage_logs
-               GROUP BY key_id, key_prefix, key_name
+            """SELECT l.key_id, k.key_prefix AS key_prefix,
+                      k.name AS key_name, COUNT(*) AS call_count
+               FROM usage_logs l
+               LEFT JOIN api_keys k ON k.id = l.key_id
+               GROUP BY l.key_id
                ORDER BY call_count DESC
                LIMIT ?""",
             (limit,),
@@ -656,6 +658,17 @@ async def update_key_upstream(key_id: int, upstream_id: Optional[int]) -> bool:
         cur = await db.execute(
             "UPDATE api_keys SET upstream_id = ? WHERE id = ?",
             (upstream_id, key_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def rename_key(key_id: int, name: Optional[str]) -> bool:
+    """仅修改密钥备注名称，不影响 key 明文、绑定上游与统计。"""
+    async with aiosqlite.connect(settings.db_file) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET name = ? WHERE id = ?",
+            (name, key_id),
         )
         await db.commit()
         return cur.rowcount > 0
