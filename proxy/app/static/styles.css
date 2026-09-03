@@ -203,7 +203,7 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .view { padding: 28px; display: flex; flex-direction: column; gap: 20px; max-width: 1200px; }
 
 /* ===== 卡片 / 统计 ===== */
-.cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
 .card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -238,13 +238,6 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 }
 
 /* ===== 排行榜 ===== */
-.rank-bars { display: flex; flex-direction: column; gap: 10px; }
-.rank-item {
-  display: grid;
-  grid-template-columns: 28px 1fr 80px;
-  align-items: center;
-  gap: 12px;
-}
 .rank-idx {
   text-align: center;
   font-size: 12px;
@@ -254,39 +247,6 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .rank-idx.top1 { color: #f59e0b; }
 .rank-idx.top2 { color: #9ca3af; }
 .rank-idx.top3 { color: #d97706; }
-.rank-bar-wrap {
-  background: var(--bg-soft);
-  border-radius: 6px;
-  height: 28px;
-  position: relative;
-  overflow: hidden;
-}
-.rank-bar {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), #34d399);
-  border-radius: 6px;
-  transition: width .6s ease;
-}
-.rank-label {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 12px;
-  color: var(--text);
-  font-weight: 500;
-  z-index: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 70%;
-}
-.rank-count {
-  text-align: right;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
 
 /* ===== 表格 ===== */
 .table-wrap { overflow-x: auto; }
@@ -302,6 +262,7 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .badge-active { background: rgba(34,197,94,.15); color: var(--success); }
 .badge-revoked { background: rgba(239,68,68,.15); color: var(--danger); }
 .badge-anthropic { background: rgba(217,119,6,.18); color: #fbbf24; }
+.badge-usage { background: rgba(16,185,129,.16); color: var(--success); }
 .badge-model { background: rgba(99,102,241,.14); color: var(--primary); }
 
 .form-rows { display: flex; flex-direction: column; gap: 14px; }
@@ -378,19 +339,12 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .toast.success { border-color: rgba(34,197,94,.5); }
 
 /* ===== 响应式 ===== */
-@media (max-width: 1100px) {
-  .cards { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 900px) {
-  .cards { grid-template-columns: repeat(2, 1fr); }
-}
 @media (max-width: 640px) {
   .sidebar { width: 64px; }
   .brand span:not(.logo-dot), .nav-item { font-size: 0; }
   .nav-item::first-letter { font-size: 18px; }
   .user-info { display: none; }
   .view { padding: 18px; }
-  .cards { grid-template-columns: 1fr 1fr; }
 }
 
 /* ===== 对话页面 ===== */
@@ -827,6 +781,100 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .hljs-strong { font-weight: bold; }
 .hljs-addition { color: #aff5b4; background-color: #033a16; }
 .hljs-deletion { color: #ffdcd7; background-color: #67060c; }
+
+/* ===== 用量统计：粒度工具栏 / 排行表 / 密钥×周期矩阵 ===== */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.stats-gran-tabs {
+  display: inline-flex;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.stats-gran-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, color .15s;
+}
+.stats-gran-tab:hover { color: var(--text); }
+.stats-gran-tab.active {
+  background: var(--bg-elev);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+.trend-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.trend-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.matrix-hint { color: var(--text-mute); font-size: 12px; }
+.table th.num, .table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.matrix-wrap { max-height: 480px; overflow: auto; }
+.matrix-table { border-collapse: separate; border-spacing: 0; }
+.matrix-table th, .matrix-table td {
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.matrix-table thead th:first-child,
+.matrix-table tbody th:first-child,
+.matrix-table tbody td.mc-key {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--bg-elev);
+  min-width: 150px;
+  max-width: 210px;
+  text-align: left;
+}
+.matrix-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-soft);
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+.matrix-table thead th:first-child { z-index: 4; }
+.matrix-table td.mc {
+  text-align: right;
+  min-width: 78px;
+  font-variant-numeric: tabular-nums;
+}
+.matrix-table td.mc-zero { color: var(--text-mute); }
+.mc-cell {
+  cursor: default;
+  border-radius: 6px;
+  padding: 1px 6px;
+  display: inline-block;
+  min-width: 44px;
+  text-align: right;
+}
+.matrix-table tbody tr:hover td.mc-key { background: var(--bg-soft); }
 
 @media (max-width: 900px) {
   .chat-wrap {

@@ -97,39 +97,129 @@ def _build_upstream_headers(
     return headers
 
 
-async def _stream_upstream(
+async def _commit_usage(usage_log_id, input_tokens, output_tokens, cache_read_tokens=None) -> None:
+    """尽力回填 token 用量；上游未上报（两项均 None）时不落库覆盖。"""
+    if not usage_log_id:
+        return
+    if input_tokens is None and output_tokens is None:
+        return
+    try:
+        await db.update_usage_log(
+            usage_log_id, input_tokens, output_tokens, cache_read_tokens
+        )
+    except Exception:
+        # 统计回填失败不应影响已返回的流/响应
+        pass
+
+
+def _maybe_inject_include_usage(
+    body: Optional[bytes], upstream: dict, exit_proto: str
+) -> Optional[bytes]:
+    """同方言 OpenAI 流式透传时，按上游开关自动补 stream_options.include_usage。
+
+    Ollama / vLLM 等 OpenAI 兼容上游严格遵守 OpenAI 协议：流式请求若不带
+    stream_options.include_usage，流末尾就不会上报 usage 块，网关旁路扫描
+    记不到 token。此函数在转发前对请求体做一次只读解析注入：
+
+    - 仅当出口为 openai 方言、上游开了 inject_include_usage 开关、
+      请求体是含 stream=true 的 JSON、且未显式声明 include_usage 时才改写；
+    - 客户端已自带 include_usage 或请求体不是可解析 JSON 时原样返回（不破坏字节）。
+    """
+    if exit_proto != PROTO_OPENAI or not upstream.get("inject_include_usage"):
+        return body
+    if not body:
+        return body
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return body
+    if not isinstance(data, dict) or not data.get("stream"):
+        return body
+    so = data.get("stream_options")
+    if isinstance(so, dict) and so.get("include_usage"):
+        return body
+    data["stream_options"] = {"include_usage": True}
+    return json.dumps(data, ensure_ascii=False).encode("utf-8")
+
+
+async def _relay_upstream(
     method: str,
     url: str,
     headers: dict[str, str],
     body: Optional[bytes],
-) -> StreamingResponse:
-    # 注意：不能用 async with client.stream(...) 然后返回 StreamingResponse，
-    # 否则上下文会在响应体被消费前关闭上游连接，导致空响应。
-    # 这里手动管理 client / response 的生命周期，在生成器结束时关闭。
-    # trust_env=False：不读环境代理/证书变量。实测 pyenv 3.10 下 trust_env=True
-    # 会让全部 HTTPS 出站 ConnectError（本机复现），直连反而正常。
+    *,
+    proto: str = PROTO_OPENAI,
+    usage_log_id: Optional[int] = None,
+) -> Response:
+    """原样转发上游响应（同协议透传），并按上游协议旁路采集 usage。
+
+    - SSE 流：逐块透传的同时喂 SSEUsageScanner（不改写字节），
+      流结束后把观测到的 token 回填到 usage_logs；
+    - 其余（JSON 等）：整读响应后透传，成功且带 usage 的 JSON 一并采集；
+    - 注意：不能用 async with client.stream(...) 后返回 StreamingResponse，
+      否则上下文会在响应体被消费前关闭上游连接，导致空响应。
+      这里手动管理 client / response 的生命周期，在生成器结束时关闭。
+      trust_env=False：不读环境代理/证书变量。实测 pyenv 3.10 下
+      trust_env=True 会让全部 HTTPS 出站 ConnectError（本机复现），直连反而正常。
+    """
     client = httpx.AsyncClient(timeout=None, trust_env=False)
     req = client.build_request(method, url, headers=headers, content=body)
     upstream = await client.send(req, stream=True)
+    status_code = upstream.status_code
+    ctype = upstream.headers.get("content-type", "")
     resp_headers = {
         k: v
         for k, v in upstream.headers.items()
         if k.lower() not in _DROP_RESP_HEADERS
     }
+    collect = usage_log_id and status_code < 400
 
-    async def body_iter():
+    if "text/event-stream" in ctype:
+        scanner = compat.SSEUsageScanner(proto) if collect else None
+
+        async def body_iter():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    if scanner is not None:
+                        scanner.feed(chunk)
+                    yield chunk
+            finally:
+                if scanner is not None:
+                    scanner.flush()
+                    await _commit_usage(
+                        usage_log_id,
+                        scanner.input_tokens,
+                        scanner.output_tokens,
+                        scanner.cache_read_tokens,
+                    )
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            body_iter(),
+            status_code=status_code,
+            headers=resp_headers,
+        )
+
+    # 非流式：整读后透传，若为 JSON 且带 usage 则采集
+    raw = await upstream.aread()
+    await upstream.aclose()
+    await client.aclose()
+
+    if collect and "json" in ctype:
         try:
-            async for chunk in upstream.aiter_raw():
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+            if isinstance(data, dict):
+                if proto == PROTO_ANTHROPIC:
+                    obs = compat.anthropic_usage_of(data)
+                else:
+                    obs = compat.openai_usage_of(data)
+                if obs is not None:
+                    await _commit_usage(usage_log_id, obs[0], obs[1], obs[2])
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
 
-    return StreamingResponse(
-        body_iter(),
-        status_code=upstream.status_code,
-        headers=resp_headers,
-    )
+    return Response(content=raw, status_code=status_code, headers=resp_headers)
 
 
 def _translate_request_body(body: dict, from_proto: str, to_proto: str) -> str:
@@ -148,10 +238,12 @@ async def _forward_translated(
     body: Optional[bytes],
     exit_proto: str,
     entry_proto: str,
+    usage_log_id: Optional[int] = None,
 ) -> Response:
     """把（已翻译成 exit_proto 的）请求发给上游，再把上游响应翻译回 entry_proto。
 
     支持 SSE 流式事件与 JSON 整体响应两类；非 2xx 错误体也会做形状转换。
+    流式转换器在解析事件时已捕获上游真实 usage，结束后回填 usage_logs。
     """
     client = httpx.AsyncClient(timeout=None, trust_env=False)
     req = client.build_request(method, url, headers=headers, content=body)
@@ -189,6 +281,13 @@ async def _forward_translated(
                     async for chunk in upstream.aiter_raw():
                         yield chunk
             finally:
+                if transformer is not None:
+                    await _commit_usage(
+                        usage_log_id,
+                        getattr(transformer, "input_tokens", None),
+                        getattr(transformer, "output_tokens", None),
+                        getattr(transformer, "cache_read_tokens", None),
+                    )
                 await upstream.aclose()
                 await client.aclose()
 
@@ -224,8 +323,15 @@ async def _forward_translated(
             out = data
         return JSONResponse(content=out, status_code=status_code)
 
-    # 正常响应
+    # 正常响应：先按上游协议提取真实 usage，再做方言翻译
     if isinstance(data, dict):
+        if usage_log_id:
+            if exit_proto == PROTO_ANTHROPIC:
+                obs = compat.anthropic_usage_of(data)
+            else:
+                obs = compat.openai_usage_of(data)
+            if obs is not None:
+                await _commit_usage(usage_log_id, obs[0], obs[1], obs[2])
         if entry_proto == PROTO_ANTHROPIC and exit_proto == PROTO_OPENAI:
             # 客户端 Anthropic、上游 OpenAI：OpenAI 响应 → Anthropic
             out = compat.openai_to_anthropic_resp(data)
@@ -294,6 +400,7 @@ async def proxy(path: str, request: Request, key_record: dict = Depends(verify_a
         exit_proto = PROTO_OPENAI
     entry_proto = _entry_dialect(path, request)
     same_proto = entry_proto == exit_proto
+    usage_log_id = key_record.get("_usage_log_id")
 
     # Anthropic 客户端的 token 计数请求：若上游也是 anthropic 则透传，否则本地估算
     if path == "messages/count_tokens":
@@ -302,7 +409,7 @@ async def proxy(path: str, request: Request, key_record: dict = Depends(verify_a
             headers = _build_upstream_headers(request, upstream.get("api_key", ""), exit_proto)
             body = await request.body()
             try:
-                return await _stream_upstream(request.method, url, headers, body or None)
+                return await _relay_upstream(request.method, url, headers, body or None, proto=exit_proto)
             except httpx.HTTPError as exc:
                 raise HTTPException(status_code=502, detail=_upstream_error_detail(exc))
         return await _handle_count_tokens(await request.body(), base, upstream.get("api_key", ""))
@@ -314,10 +421,14 @@ async def proxy(path: str, request: Request, key_record: dict = Depends(verify_a
         headers = _build_upstream_headers(request, upstream.get("api_key", ""), exit_proto)
 
         if same_proto:
-            # 同方言：URL 直接按路径拼，原样透传
+            # 同方言：URL 直接按路径拼，原样透传（旁路采集 usage）
             url = _target_url(base, path, request)
+            forwarded_body = _maybe_inject_include_usage(body_bytes or None, upstream, exit_proto)
             try:
-                return await _stream_upstream(request.method, url, headers, body_bytes or None)
+                return await _relay_upstream(
+                    request.method, url, headers, forwarded_body,
+                    proto=exit_proto, usage_log_id=usage_log_id,
+                )
             except httpx.HTTPError as exc:
                 raise HTTPException(status_code=502, detail=_upstream_error_detail(exc))
 
@@ -332,7 +443,8 @@ async def proxy(path: str, request: Request, key_record: dict = Depends(verify_a
         url = _chat_url(exit_proto, base)
         try:
             return await _forward_translated(
-                request.method, url, headers, translated_body, exit_proto, entry_proto
+                request.method, url, headers, translated_body, exit_proto, entry_proto,
+                usage_log_id=usage_log_id,
             )
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=_upstream_error_detail(exc))
@@ -342,7 +454,10 @@ async def proxy(path: str, request: Request, key_record: dict = Depends(verify_a
     headers = _build_upstream_headers(request, upstream.get("api_key", ""), exit_proto)
     body = await request.body()
     try:
-        return await _stream_upstream(request.method, url, headers, body or None)
+        return await _relay_upstream(
+            request.method, url, headers, body or None,
+            proto=exit_proto, usage_log_id=usage_log_id,
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

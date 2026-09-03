@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class KeyCreateRequest(BaseModel):
@@ -87,11 +87,26 @@ class OverallStats(BaseModel):
     total_users: int
     total_calls: int
     today_calls: int
+    total_tokens: int = 0
+    today_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    today_cache_read_tokens: int = 0
 
 
 class UsageTrendItem(BaseModel):
-    date: str
+    date: str = Field(description="周期起始日 YYYY-MM-DD，兼容旧字段")
+    label: str = Field(default="", description="横轴展示标签，如 09-03 / 09-01周 / 2026-09")
+    start: str = Field(default="", description="周期起始日 YYYY-MM-DD")
+    end: str = Field(default="", description="周期结束日 YYYY-MM-DD")
     count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class UsageKeyItem(BaseModel):
@@ -99,11 +114,60 @@ class UsageKeyItem(BaseModel):
     key_prefix: str
     key_name: Optional[str] = None
     call_count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class UsageStats(BaseModel):
     trend: list[UsageTrendItem]
     by_key: list[UsageKeyItem]
+
+
+class UsagePeriod(BaseModel):
+    start: str
+    end: str
+    label: str
+
+
+class UsageMatrixCell(BaseModel):
+    count: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+class UsageMatrixRow(BaseModel):
+    key_id: int
+    key_prefix: str
+    key_name: Optional[str] = None
+    total_calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+    cells: list[UsageMatrixCell]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+class UsageMatrix(BaseModel):
+    granularity: str
+    days: int
+    periods: list[UsagePeriod]
+    rows: list[UsageMatrixRow]
 
 
 class UpstreamItem(BaseModel):
@@ -114,6 +178,9 @@ class UpstreamItem(BaseModel):
     protocol: str = "openai"
     models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool
+    inject_include_usage: bool = Field(
+        default=False, description="OpenAI 方言流式请求自动补 stream_options.include_usage，用于取回 token 用量"
+    )
     created_at: str
 
 
@@ -124,6 +191,9 @@ class UpstreamCreateRequest(BaseModel):
     protocol: str = "openai"
     models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool = False
+    inject_include_usage: bool = Field(
+        default=False, description="OpenAI 方言流式请求自动补 stream_options.include_usage，用于取回 token 用量"
+    )
 
 
 class UpstreamUpdateRequest(BaseModel):
@@ -133,6 +203,9 @@ class UpstreamUpdateRequest(BaseModel):
     protocol: str = "openai"
     models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool = False
+    inject_include_usage: bool = Field(
+        default=False, description="OpenAI 方言流式请求自动补 stream_options.include_usage，用于取回 token 用量"
+    )
 
 
 LoginResponse.model_rebuild()

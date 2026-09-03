@@ -11,12 +11,15 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiosqlite
 
 from .config import settings
+
+# 用量聚合支持的统计粒度
+GRANULARITIES = ("day", "week", "month")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS upstreams (
@@ -27,6 +30,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
     protocol TEXT NOT NULL DEFAULT 'openai',
     models TEXT NOT NULL DEFAULT '[]',
     is_default INTEGER NOT NULL DEFAULT 0,
+    inject_include_usage INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -59,7 +63,10 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     key_prefix TEXT NOT NULL,
     key_name TEXT,
     request_time TEXT NOT NULL,
-    date_str TEXT NOT NULL
+    date_str TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_logs_date ON usage_logs(date_str);
@@ -186,6 +193,25 @@ async def _migrate_db(db) -> None:
     if "models" not in cols:
         await db.execute(
             "ALTER TABLE upstreams ADD COLUMN models TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "inject_include_usage" not in cols:
+        await db.execute(
+            "ALTER TABLE upstreams ADD COLUMN inject_include_usage INTEGER NOT NULL DEFAULT 0"
+        )
+
+    async with db.execute("PRAGMA table_info(usage_logs)") as cur:
+        cols = [row[1] for row in await cur.fetchall()]
+    if "input_tokens" not in cols:
+        await db.execute(
+            "ALTER TABLE usage_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"
+        )
+    if "output_tokens" not in cols:
+        await db.execute(
+            "ALTER TABLE usage_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"
+        )
+    if "cache_read_tokens" not in cols:
+        await db.execute(
+            "ALTER TABLE usage_logs ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0"
         )
 
     await _ensure_default_upstream(db)
@@ -322,7 +348,8 @@ async def reset_key(key_id: int) -> Optional[dict]:
         return dict(r) if r else None
 
 
-async def record_usage(key_id: int) -> None:
+async def record_usage(key_id: int) -> int:
+    """记录一次调用并返回 usage_logs 行 id（供响应结束后回填 token 用量）。"""
     now = _now()
     date_str = now[:10]
     async with aiosqlite.connect(settings.db_file) as db:
@@ -336,13 +363,39 @@ async def record_usage(key_id: int) -> None:
             (key_id,),
         )
         row = await cur.fetchone()
+        log_id = None
         if row:
-            await db.execute(
+            cur = await db.execute(
                 """INSERT INTO usage_logs
                    (key_id, key_prefix, key_name, request_time, date_str)
                    VALUES (?, ?, ?, ?, ?)""",
                 (key_id, row[0], row[1], now, date_str),
             )
+            log_id = cur.lastrowid
+        await db.commit()
+        return log_id
+
+
+async def update_usage_log(log_id: int, input_tokens: int, output_tokens: int, cache_read_tokens=None) -> None:
+    """回填一次调用实际消耗的 token；调用方仅在拿到上游 usage 时调用。
+
+    input_tokens/output_tokens 为 None 表示上游未上报（保持 0 不覆盖），
+    因此这里强制要求给出整数，由调用方决定是否需要回填。
+    cache_read_tokens 为本次输入中命中上游缓存的 token 数（无上报记 0）。
+    """
+    if not log_id:
+        return
+    async with aiosqlite.connect(settings.db_file) as db:
+        await db.execute(
+            "UPDATE usage_logs SET input_tokens = ?, output_tokens = ?, "
+            "cache_read_tokens = ? WHERE id = ?",
+            (
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+                int(cache_read_tokens or 0),
+                log_id,
+            ),
+        )
         await db.commit()
 
 
@@ -455,36 +508,237 @@ async def count_admin_by_role(role: str) -> int:
         return row[0] if row else 0
 
 
-async def get_usage_trend(days: int = 7) -> list[dict]:
+# ---------- 用量聚合（支持 day / week / month 三种时间粒度） ----------
+#
+# 统一做法：SQL 只按自然日（date_str）做第一层聚合，week/month 的桶化在
+# Python 侧完成（ISO 周=周一起始、自然月=每月 1 号起），避免 SQLite 周/月
+# 边界语义与 Python/JS 不一致。窗口内没有记录的桶补 0，保证趋势/矩阵连续。
+
+
+def _utc_today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _d_from(date_str: str):
+    return datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+
+
+def _bucket_start(day, granularity: str):
+    """day 所在桶的起始日期：day→当天；week→周一；month→1 号。"""
+    if granularity == "week":
+        return day - timedelta(days=day.weekday())
+    if granularity == "month":
+        return day.replace(day=1)
+    return day
+
+
+def _next_bucket_start(bucket_start, granularity: str):
+    """桶起始日的下一个桶起始日。"""
+    if granularity == "week":
+        return bucket_start + timedelta(days=7)
+    if granularity == "month":
+        y = bucket_start.year + (1 if bucket_start.month == 12 else 0)
+        m = 1 if bucket_start.month == 12 else bucket_start.month + 1
+        return bucket_start.replace(year=y, month=m)
+    return bucket_start + timedelta(days=1)
+
+
+def _bucket_label(bucket_start, granularity: str) -> str:
+    if granularity == "month":
+        return bucket_start.strftime("%Y-%m")
+    if granularity == "week":
+        return bucket_start.strftime("%m-%d") + "周"
+    return bucket_start.strftime("%m-%d")
+
+
+def _period_series(start_day, end_day, granularity: str) -> list[dict]:
+    """生成窗口内连续的周期序列，每项 {start,end,label}（start/end 为 YYYY-MM-DD）。
+
+    end 不超过窗口末日（末个周期未走完时只标到今日）。
+    """
+    bucket = _bucket_start(start_day, granularity)
+    out: list[dict] = []
+    guard = 0
+    while bucket <= end_day and guard < 1000:
+        guard += 1
+        nxt = _next_bucket_start(bucket, granularity)
+        period_end = nxt - timedelta(days=1)
+        if period_end > end_day:
+            period_end = end_day
+        out.append({
+            "start": bucket.isoformat(),
+            "end": period_end.isoformat(),
+            "label": _bucket_label(bucket, granularity),
+        })
+        bucket = nxt
+    return out
+
+
+async def _fetch_daily_aggregates(start_date: str) -> list[dict]:
+    """拉取窗口内按自然日聚合的原始计数与 token，供上层桶化复用。"""
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT date_str AS date, COUNT(*) AS count
+            """SELECT date_str, COUNT(*) AS cnt,
+                      COALESCE(SUM(input_tokens), 0) AS itok,
+                      COALESCE(SUM(output_tokens), 0) AS otok,
+                      COALESCE(SUM(cache_read_tokens), 0) AS ctok
                FROM usage_logs
-               WHERE date_str >= date('now', ?)
-               GROUP BY date_str
-               ORDER BY date_str ASC""",
-            (f"-{days - 1} days",),
+               WHERE date_str >= ?
+               GROUP BY date_str""",
+            (start_date,),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_usage_by_key(limit: int = 10) -> list[dict]:
+async def get_usage_trend(days: int = 7, granularity: str = "day") -> list[dict]:
+    """按粒度返回趋势序列（补零到完整周期）。"""
+    if granularity not in GRANULARITIES:
+        granularity = "day"
+    end_day = _d_from(_utc_today())
+    start_day = end_day - timedelta(days=days - 1)
+    daily = await _fetch_daily_aggregates(start_day.isoformat())
+
+    # 逐日聚合 → 桶聚合
+    bucket_agg: dict[str, list[int]] = {}
+    for row in daily:
+        key = _bucket_start(_d_from(row["date_str"]), granularity).isoformat()
+        agg = bucket_agg.setdefault(key, [0, 0, 0, 0])
+        agg[0] += row["cnt"]
+        agg[1] += row["itok"]
+        agg[2] += row["otok"]
+        agg[3] += row["ctok"]
+
+    out = []
+    for period in _period_series(start_day, end_day, granularity):
+        cnt, itok, otok, ctok = bucket_agg.get(period["start"], [0, 0, 0, 0])
+        out.append({
+            "date": period["start"],
+            "start": period["start"],
+            "end": period["end"],
+            "label": period["label"],
+            "count": cnt,
+            "input_tokens": itok,
+            "output_tokens": otok,
+            "cache_read_tokens": ctok,
+        })
+    return out
+
+
+async def get_usage_by_key(
+    days: int = 30, granularity: str = "day", limit: int = 10
+) -> list[dict]:
+    """窗口内按密钥聚合的用量排行（含 token 汇总）。"""
+    if granularity not in GRANULARITIES:
+        granularity = "day"
+    end_day = _d_from(_utc_today())
+    start_day = end_day - timedelta(days=days - 1)
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT l.key_id, k.key_prefix AS key_prefix,
-                      k.name AS key_name, COUNT(*) AS call_count
+                      k.name AS key_name, COUNT(*) AS call_count,
+                      COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+                      COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
+                      COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens
                FROM usage_logs l
                LEFT JOIN api_keys k ON k.id = l.key_id
+               WHERE l.date_str >= ?
                GROUP BY l.key_id
                ORDER BY call_count DESC
                LIMIT ?""",
-            (limit,),
+            (start_day.isoformat(), limit),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+
+async def get_usage_matrix(days: int = 7, granularity: str = "day") -> dict:
+    """密钥 × 周期 的每日/每周/每月用量矩阵。
+
+    返回结构：{granularity, days, periods: [{start,end,label}...],
+    rows: [{key_id, key_prefix, key_name, total_calls, input_tokens, output_tokens,
+            cache_read_tokens, cells: [{count, input_tokens, output_tokens,
+            cache_read_tokens}...]}...]}
+    cells 与 periods 一一对应（无调用记 0）。
+    """
+    if granularity not in GRANULARITIES:
+        granularity = "day"
+    end_day = _d_from(_utc_today())
+    start_day = end_day - timedelta(days=days - 1)
+    periods = _period_series(start_day, end_day, granularity)
+    period_keys = [p["start"] for p in periods]
+
+    async with aiosqlite.connect(settings.db_file) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT l.key_id, l.key_prefix, l.key_name, l.date_str,
+                      COUNT(*) AS cnt,
+                      COALESCE(SUM(l.input_tokens), 0) AS itok,
+                      COALESCE(SUM(l.output_tokens), 0) AS otok,
+                      COALESCE(SUM(l.cache_read_tokens), 0) AS ctok
+               FROM usage_logs l
+               WHERE l.date_str >= ?
+               GROUP BY l.key_id, l.date_str
+               ORDER BY l.key_id ASC, l.date_str ASC""",
+            (start_day.isoformat(),),
+        )
+        rows = await cur.fetchall()
+
+    # (key_id, 桶起始日) → 聚合
+    cell_map: dict[int, dict[str, tuple[int, int, int, int]]] = {}
+    totals: dict[int, tuple[int, int, int, int]] = {}  # key_id → (calls, in, out, cache_read)
+    for r in rows:
+        kid = r["key_id"]
+        bkey = _bucket_start(_d_from(r["date_str"]), granularity).isoformat()
+        cell_map.setdefault(kid, {})[bkey] = (r["cnt"], r["itok"], r["otok"], r["ctok"])
+        cur_tot = totals.get(kid, (0, 0, 0, 0))
+        totals[kid] = (
+            cur_tot[0] + r["cnt"],
+            cur_tot[1] + r["itok"],
+            cur_tot[2] + r["otok"],
+            cur_tot[3] + r["ctok"],
+        )
+
+    key_meta: dict[int, tuple[str, str]] = {}
+    for r in rows:
+        key_meta.setdefault(r["key_id"], (r["key_prefix"], r["key_name"]))
+
+    out_rows = []
+    for kid, (prefix, name) in key_meta.items():
+        tc, ti, to, tcache = totals.get(kid, (0, 0, 0, 0))
+        cells = []
+        for pk in period_keys:
+            cnt, itok, otok, ctok = cell_map.get(kid, {}).get(pk, (0, 0, 0, 0))
+            cells.append({
+                "count": cnt,
+                "input_tokens": itok,
+                "output_tokens": otok,
+                "cache_read_tokens": ctok,
+            })
+        out_rows.append({
+            "key_id": kid,
+            "key_prefix": prefix,
+            "key_name": name,
+            "total_calls": tc,
+            "input_tokens": ti,
+            "output_tokens": to,
+            "cache_read_tokens": tcache,
+            "cells": cells,
+        })
+
+    # 用量视角：先按总 token 降序，token 相同时按调用次数降序
+    out_rows.sort(
+        key=lambda x: (x["input_tokens"] + x["output_tokens"], x["total_calls"]),
+        reverse=True,
+    )
+    return {
+        "granularity": granularity,
+        "days": days,
+        "periods": periods,
+        "rows": out_rows,
+    }
 
 
 async def get_overall_stats() -> dict:
@@ -503,12 +757,34 @@ async def get_overall_stats() -> dict:
         total_calls = (await cur.fetchone())[0]
         cur = await db.execute("SELECT COUNT(*) FROM usage_logs WHERE date_str = date('now')")
         today_calls = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_logs"
+        )
+        total_tokens = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_logs "
+            "WHERE date_str = date('now')"
+        )
+        today_tokens = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(cache_read_tokens), 0) FROM usage_logs"
+        )
+        total_cache_read = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(cache_read_tokens), 0) FROM usage_logs "
+            "WHERE date_str = date('now')"
+        )
+        today_cache_read = (await cur.fetchone())[0]
         return {
             "total_keys": total_keys,
             "active_keys": active_keys,
             "total_users": total_users,
             "total_calls": total_calls,
             "today_calls": today_calls,
+            "total_tokens": total_tokens,
+            "today_tokens": today_tokens,
+            "total_cache_read_tokens": total_cache_read,
+            "today_cache_read_tokens": today_cache_read,
         }
 
 
@@ -516,7 +792,8 @@ async def list_upstreams() -> list[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, "
+            "inject_include_usage, created_at "
             "FROM upstreams ORDER BY is_default DESC, id ASC"
         )
         rows = await cur.fetchall()
@@ -524,9 +801,10 @@ async def list_upstreams() -> list[dict]:
 
 
 def _upstream_row(r) -> dict:
-    """把上游行转 dict，并把 models 存储文本解码为列表。"""
+    """把上游行转 dict：models 存储文本解码为列表，inject_include_usage 转 bool。"""
     d = dict(r)
     d["models"] = _models_from_text(d.get("models"))
+    d["inject_include_usage"] = bool(d.get("inject_include_usage"))
     return d
 
 
@@ -534,7 +812,8 @@ async def get_upstream(upstream_id: int) -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, "
+            "inject_include_usage, created_at "
             "FROM upstreams WHERE id = ?",
             (upstream_id,),
         )
@@ -546,7 +825,8 @@ async def get_default_upstream() -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, "
+            "inject_include_usage, created_at "
             "FROM upstreams WHERE is_default = 1 LIMIT 1"
         )
         r = await cur.fetchone()
@@ -560,6 +840,7 @@ async def create_upstream(
     protocol: str = "openai",
     is_default: bool = False,
     models=None,
+    inject_include_usage: bool = False,
 ) -> dict:
     protocol = protocol if protocol in ("openai", "anthropic") else "openai"
     models_text = _models_to_text(models)
@@ -568,9 +849,11 @@ async def create_upstream(
         if is_default:
             await db.execute("UPDATE upstreams SET is_default = 0")
         cur = await db.execute(
-            """INSERT INTO upstreams (name, base_url, api_key, protocol, models, is_default, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (name, base_url.rstrip("/"), api_key, protocol, models_text, 1 if is_default else 0, now),
+            """INSERT INTO upstreams (name, base_url, api_key, protocol, models, is_default,
+                                      inject_include_usage, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, base_url.rstrip("/"), api_key, protocol, models_text,
+             1 if is_default else 0, 1 if inject_include_usage else 0, now),
         )
         await db.commit()
         return {
@@ -581,6 +864,7 @@ async def create_upstream(
             "protocol": protocol,
             "models": _models_from_text(models_text),
             "is_default": is_default,
+            "inject_include_usage": inject_include_usage,
             "created_at": now,
         }
 
@@ -593,6 +877,7 @@ async def update_upstream(
     protocol: str = "openai",
     is_default: bool = False,
     models=None,
+    inject_include_usage: bool = False,
 ) -> bool:
     protocol = protocol if protocol in ("openai", "anthropic") else "openai"
     models_text = _models_to_text(models)
@@ -601,9 +886,10 @@ async def update_upstream(
             await db.execute("UPDATE upstreams SET is_default = 0 WHERE id != ?", (upstream_id,))
         cur = await db.execute(
             """UPDATE upstreams SET name = ?, base_url = ?, api_key = ?, protocol = ?,
-                   models = ?, is_default = ?
+                   models = ?, is_default = ?, inject_include_usage = ?
                WHERE id = ?""",
-            (name, base_url.rstrip("/"), api_key, protocol, models_text, 1 if is_default else 0, upstream_id),
+            (name, base_url.rstrip("/"), api_key, protocol, models_text,
+             1 if is_default else 0, 1 if inject_include_usage else 0, upstream_id),
         )
         await db.commit()
         return cur.rowcount > 0
@@ -640,14 +926,16 @@ async def get_upstream_for_key(key_id: int) -> Optional[dict]:
         upstream_id = row[0]
         if upstream_id:
             cur = await db.execute(
-                "SELECT id, name, base_url, api_key, protocol, models, is_default FROM upstreams WHERE id = ?",
+                "SELECT id, name, base_url, api_key, protocol, models, is_default, "
+                "inject_include_usage FROM upstreams WHERE id = ?",
                 (upstream_id,),
             )
             r = await cur.fetchone()
             if r:
                 return _upstream_row(r)
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, protocol, models, is_default FROM upstreams WHERE is_default = 1 LIMIT 1"
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, "
+            "inject_include_usage FROM upstreams WHERE is_default = 1 LIMIT 1"
         )
         r = await cur.fetchone()
         return _upstream_row(r) if r else None

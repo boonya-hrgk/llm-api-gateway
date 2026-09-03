@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Gateway 授权管理系统</title>
-  <link rel="stylesheet" href="/styles.css?v=20260903j" />
+  <link rel="stylesheet" href="/styles.css?v=20260903q" />
 </head>
 <body>
   <!-- 登录视图 -->
@@ -74,7 +74,11 @@
           <div class="card stat"><div class="stat-num" id="stat-active">-</div><div class="stat-label">活跃密钥</div></div>
           <div class="card stat"><div class="stat-num" id="stat-users">-</div><div class="stat-label">用户总数</div></div>
           <div class="card stat"><div class="stat-num" id="stat-today">-</div><div class="stat-label">今日调用</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-today-tokens">-</div><div class="stat-label">今日 Token</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-cache-today">-</div><div class="stat-label">今日缓存命中</div></div>
           <div class="card stat"><div class="stat-num" id="stat-calls">-</div><div class="stat-label">累计调用</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-total-tokens">-</div><div class="stat-label">累计 Token</div></div>
+          <div class="card stat"><div class="stat-num" id="stat-cache-total">-</div><div class="stat-label">累计缓存命中</div></div>
         </div>
         <div class="card">
           <div class="card-head"><h3>最近密钥</h3></div>
@@ -89,33 +93,54 @@
 
       <!-- 用量统计 -->
       <section id="view-stats" class="view" hidden>
+        <div class="card stats-bar">
+          <div class="stats-gran-tabs" id="stats-gran" role="tablist" aria-label="统计粒度">
+            <button type="button" class="stats-gran-tab active" data-gran="day" role="tab" aria-selected="true">每日</button>
+            <button type="button" class="stats-gran-tab" data-gran="week" role="tab" aria-selected="false">每周</button>
+            <button type="button" class="stats-gran-tab" data-gran="month" role="tab" aria-selected="false">每月</button>
+          </div>
+          <div class="inline-tools">
+            <select id="stats-days" class="select-sm" title="统计窗口"></select>
+            <select id="stats-metric" class="select-sm" title="趋势指标">
+              <option value="total_tokens">总 Token</option>
+              <option value="calls">调用次数</option>
+              <option value="input_tokens">输入 Token</option>
+              <option value="output_tokens">输出 Token</option>
+              <option value="cache_read_tokens">缓存命中</option>
+            </select>
+            <select id="rank-top" class="select-sm" title="排行条数">
+              <option value="5">Top 5</option>
+              <option value="10" selected>Top 10</option>
+              <option value="20">Top 20</option>
+            </select>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head">
-            <h3>调用趋势（最近 7 天）</h3>
-            <div class="inline-tools">
-              <select id="trend-days" class="select-sm">
-                <option value="7">近 7 天</option>
-                <option value="14">近 14 天</option>
-                <option value="30">近 30 天</option>
-              </select>
-            </div>
+            <h3 id="trend-title">Token 用量趋势（每日）</h3>
+            <span class="trend-legend" id="trend-legend"><i style="background:var(--primary)"></i>总 Token</span>
           </div>
           <div class="chart-wrap">
             <svg id="trend-chart" class="trend-chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
           </div>
         </div>
         <div class="card">
-          <div class="card-head">
-            <h3>密钥调用排行</h3>
-            <div class="inline-tools">
-              <select id="rank-top" class="select-sm">
-                <option value="5">Top 5</option>
-                <option value="10" selected>Top 10</option>
-                <option value="20">Top 20</option>
-              </select>
-            </div>
+          <div class="card-head"><h3>密钥用量排行</h3></div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>#</th><th>密钥</th><th class="num">调用次数</th><th class="num">输入 Token</th><th class="num">输出 Token</th><th class="num">缓存命中</th><th class="num">总 Token</th></tr></thead>
+              <tbody id="rank-tbody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+            </table>
           </div>
-          <div id="rank-bars" class="rank-bars"><div class="muted">加载中…</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 id="matrix-title">密钥 × 每日明细</h3><span class="matrix-hint">单元格为该周期消耗的总 Token，悬浮查看输入/输出/缓存命中拆分</span></div>
+          <div class="table-wrap matrix-wrap">
+            <table class="table matrix-table">
+              <thead id="matrix-head"></thead>
+              <tbody id="matrix-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -144,8 +169,8 @@
           </div>
           <div class="table-wrap">
             <table class="table">
-              <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>协议</th><th>模型</th><th>默认</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="upstreams-tbody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+              <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>协议</th><th>模型</th><th>默认</th><th>Token 采集</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody id="upstreams-tbody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -353,6 +378,10 @@
         <label class="check-row">
           <input type="checkbox" id="upstream-is-default" /> 设为默认上游
         </label>
+        <label class="check-row">
+          <input type="checkbox" id="upstream-inject-usage" /> 流式自动补 include_usage
+        </label>
+        <div class="field-hint" style="margin-top:-6px">OpenAI 方言流式请求自动补 <code>stream_options.include_usage</code>，让 Ollama / vLLM 等上游在流末尾上报 token 用量。非流式不受影响；Anthropic 上游忽略此项。</div>
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" data-close>取消</button>
@@ -365,9 +394,9 @@
   <div id="toast" class="toast" hidden></div>
 
   <!-- Markdown 渲染 / 代码高亮 / HTML 净化（本地化，离线可用） -->
-  <script src="/vendor/marked.min.js?v=20260903j"></script>
-  <script src="/vendor/highlight.min.js?v=20260903j"></script>
-  <script src="/vendor/purify.min.js?v=20260903j"></script>
-  <script src="/app.js?v=20260903j"></script>
+  <script src="/vendor/marked.min.js?v=20260903q"></script>
+  <script src="/vendor/highlight.min.js?v=20260903q"></script>
+  <script src="/vendor/purify.min.js?v=20260903q"></script>
+  <script src="/app.js?v=20260903q"></script>
 </body>
 </html>

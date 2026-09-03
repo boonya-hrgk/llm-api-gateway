@@ -233,6 +233,10 @@ def anthropic_to_openai_req(body: dict) -> dict:
         result["tool_choice"] = _anthropic_tool_choice_to_openai(body["tool_choice"])
     if body.get("stream") is not None:
         result["stream"] = body["stream"]
+    # OpenAI 上游默认流式响应不返回 usage；强制 include_usage 以便网关统计 token。
+    # 仅对翻译出站（Anthropic→OpenAI）生效，兼容实现普遍接受该字段。
+    if result.get("stream") and isinstance(result["stream"], bool) and result["stream"]:
+        result.setdefault("stream_options", {"include_usage": True})
     return result
 
 
@@ -544,6 +548,98 @@ def _sse_event(event: Optional[str], data: dict | str) -> bytes:
 
 
 # =========================================================
+#  usage（token 用量）解析：网关统计口径，非客户端可见值
+# =========================================================
+
+
+def openai_usage_of(data: dict):
+    """从任意 OpenAI 响应（完整响应或流式 chunk）取 (input, output, cache_read)；无 usage 返回 None。
+
+    OpenAI 的 usage 字段在非流式响应与 stream_options=include_usage 的末块中出现，
+    字段名 prompt_tokens / completion_tokens。缓存命中量在
+    usage.prompt_tokens_details.cached_tokens（包含在 prompt_tokens 之内）。
+    """
+    usage = data.get("usage") or {}
+    if not isinstance(usage, dict):
+        return None
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    if prompt is None and completion is None:
+        return None
+    details = usage.get("prompt_tokens_details") or {}
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    return (prompt or 0, completion or 0, cached or 0)
+
+
+def anthropic_usage_of(data: dict):
+    """从 Anthropic 响应/消息取 (input, output, cache_read)；无 usage 返回 None。
+
+    输入口径包含缓存读/写：input_tokens + cache_read_input_tokens +
+    cache_creation_input_tokens（这三段互不重叠，共同构成真实输入消耗）。
+    第三元 cache_read 单独返回缓存命中读取量（计入第一元，供统计页单独展示）。
+    无任何 token 字段时返回 None（上游未上报）。
+    """
+    usage = data.get("usage") or {}
+    if not isinstance(usage, dict):
+        return None
+    inp = usage.get("input_tokens")
+    out = usage.get("output_tokens")
+    cache_read = usage.get("cache_read_input_tokens") or 0
+    cache_write = usage.get("cache_creation_input_tokens") or 0
+    if inp is None and out is None and not cache_read and not cache_write:
+        return None
+    return ((inp or 0) + cache_read + cache_write, out or 0, cache_read)
+
+
+class SSEUsageScanner:
+    """SSE 流的只读 usage 扫描器（透传用，不改写字节）。
+
+    把逐块字节喂给 scanner（与透传并行），流结束后读取 input_tokens /
+    output_tokens（均为 None 表示上游未上报）。SSEBuffer 内部自带缓冲，
+    跨 chunk 分片的事件也能被正确解析，且不影响透传的原始字节。
+    """
+
+    def __init__(self, proto: str = "openai") -> None:
+        self._buf = SSEBuffer()
+        self.proto = proto
+        self.input_tokens: Optional[int] = None
+        self.output_tokens: Optional[int] = None
+        self.cache_read_tokens: Optional[int] = None
+
+    def feed(self, chunk: bytes) -> None:
+        for ev_type, data_str in self._buf.feed(chunk):
+            self._handle(ev_type, data_str)
+
+    def flush(self) -> None:
+        for ev_type, data_str in self._buf.flush():
+            self._handle(ev_type, data_str)
+
+    def _handle(self, ev_type, data_str: str) -> None:
+        if not data_str or data_str.strip() == "[DONE]":
+            return
+        try:
+            data = json.loads(data_str)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(data, dict):
+            return
+        if self.proto == "anthropic":
+            if ev_type == "message_start":
+                msg = data.get("message") or {}
+                obs = anthropic_usage_of(msg)
+                if obs is not None:
+                    self.input_tokens, _, self.cache_read_tokens = obs
+            elif ev_type == "message_delta":
+                obs = anthropic_usage_of(data)
+                if obs is not None:
+                    self.output_tokens = obs[1]
+        else:
+            obs = openai_usage_of(data)
+            if obs is not None:
+                self.input_tokens, self.output_tokens, self.cache_read_tokens = obs
+
+
+# =========================================================
 #  流式转换器 A：OpenAI 上游流 → Anthropic 事件流
 # =========================================================
 
@@ -564,7 +660,9 @@ class OpenAIStreamToAnthropic:
         self._tool_block_map: dict[int, int] = {}   # openai tool index → anthropic block index
         self._open_blocks: dict[int, str] = {}      # anthropic block index → type
         self._finish_reason: Optional[str] = None
-        self._usage_output: Optional[int] = None
+        self.input_tokens: Optional[int] = None     # 网关观测口径：上游真实上报
+        self.output_tokens: Optional[int] = None
+        self.cache_read_tokens: Optional[int] = None
         self._done = False
         self._output: list[bytes] = []
 
@@ -594,9 +692,9 @@ class OpenAIStreamToAnthropic:
         choices = data.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             # 无 choices 的块通常是 usage 块（stream_options=include_usage）
-            usage = data.get("usage") or {}
-            if usage.get("completion_tokens") is not None:
-                self._usage_output = usage["completion_tokens"]
+            obs = openai_usage_of(data)
+            if obs is not None:
+                self.input_tokens, self.output_tokens, self.cache_read_tokens = obs
             return
         delta = choices[0].get("delta") or {}
         fr = choices[0].get("finish_reason")
@@ -651,8 +749,8 @@ class OpenAIStreamToAnthropic:
             delta["stop_reason"] = _STOP_OPENAI_TO_ANTHROPIC.get(
                 self._finish_reason, "end_turn"
             )
-        if self._usage_output is not None:
-            delta["usage"] = {"output_tokens": self._usage_output}
+        if self.output_tokens is not None:
+            delta["usage"] = {"output_tokens": self.output_tokens}
         if delta:
             self._output.append(_sse_event("message_delta", {
                 "type": "message_delta",
@@ -742,7 +840,9 @@ class AnthropicStreamToOpenAI:
         self._tool_openai_index = 0
         self._tool_by_block: dict[int, int] = {}
         self._pending_stop: Optional[str] = None
-        self._usage_output: Optional[int] = None
+        self.input_tokens: Optional[int] = None     # 网关观测口径：上游真实上报
+        self.output_tokens: Optional[int] = None
+        self.cache_read_tokens: Optional[int] = None
         self._done = False
         self._output: list[bytes] = []
 
@@ -767,6 +867,10 @@ class AnthropicStreamToOpenAI:
             msg = (data.get("message") or {}) if ev_type == "message_start" else {}
             self._model = msg.get("model") or self._model
             self._msg_id = msg.get("id") or ""
+            # Anthropic 流式在 message_start 的 message.usage 中给出输入（含缓存）
+            obs = anthropic_usage_of(msg)
+            if obs is not None:
+                self.input_tokens, _, self.cache_read_tokens = obs
             self._emit({
                 "id": self._msg_id,
                 "object": "chat.completion.chunk",
@@ -843,7 +947,7 @@ class AnthropicStreamToOpenAI:
             self._pending_stop = d.get("stop_reason")
             usage = data.get("usage") or {}
             if usage.get("output_tokens") is not None:
-                self._usage_output = usage["output_tokens"]
+                self.output_tokens = usage["output_tokens"]
         elif typ == "message_stop":
             self._finish()
         elif typ == "error":
@@ -880,11 +984,11 @@ class AnthropicStreamToOpenAI:
                 "finish_reason": _STOP_ANTHROPIC_TO_OPENAI.get(self._pending_stop or "", "stop"),
             }],
         }
-        if self._usage_output is not None:
+        if self.output_tokens is not None:
             chunk["usage"] = {
                 "prompt_tokens": 0,
-                "completion_tokens": self._usage_output,
-                "total_tokens": self._usage_output,
+                "completion_tokens": self.output_tokens,
+                "total_tokens": self.output_tokens,
             }
         self._emit(chunk)
         self._output.append(b"data: [DONE]\n\n")

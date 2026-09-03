@@ -17,6 +17,7 @@ from .schemas import (
     UpstreamCreateRequest,
     UpstreamItem,
     UpstreamUpdateRequest,
+    UsageMatrix,
     UsageStats,
     UserCreateRequest,
     UserInfo,
@@ -28,6 +29,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 _viewer_router = APIRouter(dependencies=[Depends(verify_admin_jwt)])
 _admin_router = APIRouter(dependencies=[Depends(require_admin)])
+
+_GRANULARITIES = ("day", "week", "month")
+
+
+def _granularity(value: str) -> str:
+    if value not in _GRANULARITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"granularity 只支持 {'/'.join(_GRANULARITIES)}",
+        )
+    return value
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -126,12 +138,24 @@ async def stats_overview() -> dict:
 
 @_viewer_router.get("/stats/usage", response_model=UsageStats)
 async def stats_usage(
-    days: int = Query(default=7, ge=1, le=90),
+    days: int = Query(default=7, ge=1, le=365),
     top: int = Query(default=10, ge=1, le=100),
+    granularity: str = Query(default="day", description="day / week / month"),
 ) -> dict:
-    trend = await db.get_usage_trend(days=days)
-    by_key = await db.get_usage_by_key(limit=top)
+    gran = _granularity(granularity)
+    trend = await db.get_usage_trend(days=days, granularity=gran)
+    by_key = await db.get_usage_by_key(days=days, granularity=gran, limit=top)
     return {"trend": trend, "by_key": by_key}
+
+
+@_viewer_router.get("/stats/usage/matrix", response_model=UsageMatrix)
+async def stats_usage_matrix(
+    days: int = Query(default=7, ge=1, le=365),
+    granularity: str = Query(default="day", description="day / week / month"),
+) -> dict:
+    """密钥 × 周期（每日/每周/每月）的用量明细矩阵。"""
+    gran = _granularity(granularity)
+    return await db.get_usage_matrix(days=days, granularity=gran)
 
 
 @_admin_router.get("/users", response_model=list[UserListItem])
@@ -200,14 +224,16 @@ async def get_upstream(upstream_id: int) -> dict:
 @_admin_router.post("/upstreams", response_model=UpstreamItem)
 async def create_upstream(body: UpstreamCreateRequest) -> dict:
     return await db.create_upstream(
-        body.name, body.base_url, body.api_key, body.protocol, body.is_default, models=body.models
+        body.name, body.base_url, body.api_key, body.protocol, body.is_default,
+        models=body.models, inject_include_usage=body.inject_include_usage,
     )
 
 
 @_admin_router.put("/upstreams/{upstream_id}", response_model=UpstreamItem)
 async def update_upstream(upstream_id: int, body: UpstreamUpdateRequest) -> dict:
     ok = await db.update_upstream(
-        upstream_id, body.name, body.base_url, body.api_key, body.protocol, body.is_default, models=body.models
+        upstream_id, body.name, body.base_url, body.api_key, body.protocol, body.is_default,
+        models=body.models, inject_include_usage=body.inject_include_usage,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="上游不存在")

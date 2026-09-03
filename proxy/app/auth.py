@@ -114,7 +114,10 @@ async def verify_api_key(
                 raise HTTPException(status_code=401, detail="API Key 已过期")
         except ValueError:
             raise HTTPException(status_code=401, detail="API Key 过期配置异常")
-    await db.record_usage(record["id"])
+    # 记录调用并把 usage_logs 行 id 挂到返回记录上，供代理在拿到上游
+    # usage 后回填 token 用量（见 db.update_usage_log）
+    usage_log_id = await db.record_usage(record["id"])
+    record["_usage_log_id"] = usage_log_id
     return record
 
 
