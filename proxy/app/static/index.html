@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Gateway 授权管理系统</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=20260903e" />
 </head>
 <body>
   <!-- 登录视图 -->
@@ -141,8 +141,8 @@
           </div>
           <div class="table-wrap">
             <table class="table">
-              <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>默认</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="upstreams-tbody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+              <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>协议</th><th>模型</th><th>默认</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody id="upstreams-tbody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -191,7 +191,13 @@
                   </label>
                 </div>
                 <label class="field"><span>模型</span>
-                  <input type="text" id="chat-model" placeholder="如 deepseek-coder" />
+                  <div class="model-picker" id="model-picker">
+                    <input type="text" id="chat-model"
+                      placeholder="点击下拉选择，或直接输入模型名" autocomplete="off" spellcheck="false" />
+                    <button type="button" class="model-picker-caret" id="chat-model-caret"
+                      title="选择模型" aria-label="选择模型"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+                    <div class="model-menu" id="chat-model-menu" hidden></div>
+                  </div>
                 </label>
                 <label class="field"><span>Temperature</span>
                   <input type="number" id="chat-temp" value="0.7" step="0.1" min="0" max="2" />
@@ -233,8 +239,8 @@
           </select>
           <span class="field-hint">不选则使用默认上游</span>
         </label>
-        <label class="field"><span>过期时间（可选，ISO8601）</span>
-          <input type="text" id="create-expires" placeholder="如 2026-12-31T23:59:59" />
+        <label class="field"><span>过期时间（可选，留空为永不过期）</span>
+          <input type="datetime-local" id="create-expires" />
         </label>
       </div>
       <div class="modal-foot">
@@ -244,13 +250,13 @@
     </div>
   </div>
 
-  <!-- 展示明文 key 模态框 -->
+  <!-- 展示明文 key 模态框（新建/重置共用） -->
   <div id="modal-key" class="modal" hidden>
     <div class="modal-mask"></div>
     <div class="modal-card">
-      <div class="card-head"><h3>密钥已生成</h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="card-head"><h3 id="modal-key-title">密钥已生成</h3><button class="icon-btn" data-close>✕</button></div>
       <div class="modal-body">
-        <p class="warn-text">请立即复制保存，此明文密钥仅显示一次，丢失后需重新生成。</p>
+        <p class="warn-text" id="modal-key-warn">请立即复制保存，此明文密钥仅显示一次，丢失后需重新生成。</p>
         <div class="key-box">
           <code id="new-key-text"></code>
           <button class="btn btn-ghost btn-sm" id="copy-key">复制</button>
@@ -302,7 +308,19 @@
         </label>
         <label class="field"><span>基础地址</span>
           <input type="text" id="upstream-base-url" placeholder="如：http://127.0.0.1:8000" />
-          <span class="field-hint">即 OpenAI 兼容接口的根地址，无需带 /v1</span>
+          <span class="field-hint">OpenAI 上游填根地址（如 http://host:port）；Anthropic 上游填兼容端点（如 https://api.deepseek.com/anthropic）</span>
+        </label>
+        <label class="field"><span>协议类型</span>
+          <select id="upstream-protocol">
+            <option value="openai">OpenAI（Chat Completions）</option>
+            <option value="anthropic">Anthropic（Messages API）</option>
+          </select>
+          <span class="field-hint">网关自动识别客户端方言并翻译，上游只需标注它说的是哪种协议</span>
+        </label>
+        <label class="field"><span>可用模型（可选，一行一个）</span>
+          <textarea id="upstream-models" rows="4"
+            placeholder="如：&#10;deepseek-chat&#10;deepseek-reasoner&#10;gpt-4o&#10;&#10;一行一个模型名，留空表示不限制/未配置"></textarea>
+          <span class="field-hint">在对话测试页会作为模型下拉候选；留空则只能手动输入</span>
         </label>
         <label class="field"><span>上游 API Key（可选）</span>
           <input type="text" id="upstream-api-key" placeholder="如为空则不设置 Authorization 头" />
@@ -321,6 +339,10 @@
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/app.js"></script>
+  <!-- Markdown 渲染 / 代码高亮 / HTML 净化（本地化，离线可用） -->
+  <script src="/vendor/marked.min.js?v=20260903e"></script>
+  <script src="/vendor/highlight.min.js?v=20260903e"></script>
+  <script src="/vendor/purify.min.js?v=20260903e"></script>
+  <script src="/app.js?v=20260903e"></script>
 </body>
 </html>

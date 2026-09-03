@@ -1,0 +1,25 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ---------- 环境与密钥（严禁提交，含明文凭据） ----------
+.env
+proxy/.env
+*.env.local
+
+# ---------- 运行时数据（SQLite 内含明文上游 key / sk- 密钥） ----------
+proxy/data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# ---------- 日志 / 临时产物 / 测试残留 ----------
+*.log
+*.tmp
+.DS_Store

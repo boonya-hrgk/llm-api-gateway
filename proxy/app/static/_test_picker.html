@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<body>
+<pre id="out">RUNNING</pre>
+<script>
+const results = [];
+const out = document.getElementById("out");
+function report(name, cond, extra) {
+  results.push((cond ? "PASS" : "FAIL") + " | " + name + (extra ? " | " + extra : ""));
+  out.textContent = results.join("\n");
+}
+function waitFor(fn, ms, label) {
+  return new Promise((res, rej) => {
+    const iv = setInterval(() => {
+      let v;
+      try { v = fn(); } catch (e) { clearInterval(iv); rej(e); return; }
+      if (v) { clearInterval(iv); res(v); }
+    }, 80);
+    setTimeout(() => { clearInterval(iv); rej(new Error("timeout: " + label)); }, ms);
+  });
+}
+(async () => {
+  try {
+    const r = await fetch("/admin/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "hrgk@admin" }),
+    });
+    const j = await r.json();
+    localStorage.setItem("ai_gateway_token", j.access_token || "");
+
+    const f = document.createElement("iframe");
+    f.id = "app";
+    f.src = "/index.html";
+    document.body.appendChild(f);
+
+    await new Promise((res) => f.addEventListener("load", res, { once: true }));
+    const w = f.contentWindow;
+    const d = f.contentDocument;
+    const input = d.getElementById("chat-model");
+    const menu = d.getElementById("chat-model-menu");
+    const items = () => Array.from(menu.querySelectorAll(".model-menu-item"));
+
+    await waitFor(() => typeof w.switchView === "function", 3000, "app.js init");
+    w.switchView("chat");
+
+    // 1) 候选池 = 全部上游配置模型（去重保序），应 >= 3
+    await waitFor(() => w.eval("_chatModelOptions.length") >= 3, 6000, "collect models").catch((e) => {
+      out.textContent += "\n[debug] opts=" + w.eval("(_chatModelOptions||[]).length")
+        + " ups=" + w.eval("(_upstreamsCache||[]).length")
+        + " keys=" + w.eval("(_chatKeysCache||[]).length")
+        + " model=" + JSON.stringify(input && input.value)
+        + " chatVisible=" + !d.getElementById("view-chat").hidden;
+      throw e;
+    });
+    report("候选池合并全部上游模型", w.eval("_chatModelOptions.length") >= 3,
+      "options=" + JSON.stringify(w.eval("_chatModelOptions")));
+
+    // 2) 输入框已被自动填充首个模型（复现用户现场）
+    await waitFor(() => input && input.value, 5000, "auto-fill model");
+    report("进入对话页自动填充默认模型", !!input.value, "value=" + input.value);
+
+    // 3) 关键修复点：输入框已有值时，展开菜单仍显示全部候选（旧 datalist 只剩 1 个）
+    input.dispatchEvent(new Event("focus", { bubbles: true }));
+    await waitFor(() => w.eval("_chatModelOpen") === true, 1000, "menu open");
+    await waitFor(() => items().length >= 3, 1000, "menu items");
+    const names = items().map((b) => b.textContent);
+    report("已填值状态下菜单展示全部模型", items().length >= 3, "shown=" + items().length + " names=" + JSON.stringify(names));
+
+    // 4) 点击非首项 → 输入框切换为该模型、菜单收起
+    const target = "deepseek-v4-pro" || names.find((n) => n !== input.value);
+    const btn = items().find((b) => b.textContent === target);
+    report("菜单包含目标模型 " + target, !!btn, "");
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await waitFor(() => w.eval("_chatModelOpen") === false, 1000, "menu close after pick");
+    report("点击后填入所选模型", input.value === target, "value=" + input.value);
+
+    // 5) 手动选定后 _chatAutoModel 清空（切换密钥不覆盖手动选择）
+    report("手动选定后不再自动跟随", w.eval("_chatAutoModel") === "", "autoModel=" + JSON.stringify(w.eval("_chatAutoModel")));
+
+    out.textContent = results.join("\n");
+    document.title = (results.some((x) => x.startsWith("FAIL")) ? "FAIL" : "ALL-PASS") + " :: " + results.filter((x) => x.startsWith("PASS")).length + " passed";
+  } catch (e) {
+    out.textContent += "\nERROR | " + e.message;
+    document.title = "ERROR";
+  }
+})();
+</script>
+</body>
+</html>

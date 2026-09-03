@@ -85,8 +85,19 @@ def _parse_bearer(authorization: str | None) -> str:
     return parts[1].strip()
 
 
-async def verify_api_key(authorization: str | None = Header(default=None)) -> dict:
-    plain = _parse_bearer(authorization)
+async def verify_api_key(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    """API Key 鉴权，兼容两种客户端习惯：
+
+    - OpenAI 方言客户端：`Authorization: Bearer sk-xxx`
+    - Anthropic 方言客户端（Claude Code 等）：`x-api-key: sk-xxx`
+    """
+    if x_api_key and x_api_key.startswith("sk-"):
+        plain = x_api_key.strip()
+    else:
+        plain = _parse_bearer(authorization)
     key_hash = hashlib.sha256(plain.encode("utf-8")).hexdigest()
     record = await db.get_key_by_hash(key_hash)
     if record is None:

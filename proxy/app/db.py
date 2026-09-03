@@ -1,11 +1,15 @@
 """SQLite 数据访问层：API-key 的持久化与 CRUD。
 
-安全策略：仅存储 key 的 sha256 哈希与可展示前缀，明文 key 不落库。
+安全策略：数据库存储 key 的 sha256 哈希（用于网关鉴权）与明文 sk（用于管理员回显/内部对话测试）。
+明文 sk 与 upstreams 表的 api_key 同等看待：仅内网管理后台可读，管理员是密钥的合法持有者，
+新建密钥后会回显一次，之后管理员仍可在后台"查看密钥"取回（reveal）；密钥丢失或泄露时可在后台
+"重置"（替换为一把新明文，旧值立即失效，无明文遗留的旧密钥也可借此获得新明文）。鉴权链路只比对哈希。
 管理员密码使用 pbkdf2_hmac 哈希存储。
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
@@ -20,6 +24,8 @@ CREATE TABLE IF NOT EXISTS upstreams (
     name TEXT NOT NULL,
     base_url TEXT NOT NULL,
     api_key TEXT DEFAULT '',
+    protocol TEXT NOT NULL DEFAULT 'openai',
+    models TEXT NOT NULL DEFAULT '[]',
     is_default INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
@@ -27,6 +33,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key_hash TEXT UNIQUE NOT NULL,
+    key TEXT,
     key_prefix TEXT NOT NULL,
     name TEXT,
     status TEXT NOT NULL DEFAULT 'active',
@@ -75,6 +82,37 @@ def _hash_key(plain: str) -> str:
 def _prefix_of(plain: str) -> str:
     head = plain[:8]
     return f"{head}{'*' * 4}"
+
+
+def _models_to_text(models) -> str:
+    """上游模型列表 → 存储用 JSON 字符串（去空、去重、保序）。"""
+    if models is None:
+        return "[]"
+    if isinstance(models, str):
+        return models
+    out: list[str] = []
+    for m in models:
+        s = str(m).strip()
+        if s and s not in out:
+            out.append(s)
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _models_from_text(raw) -> list[str]:
+    """存储的 models 文本 → 模型列表；兼容 JSON 数组与历史脏数据。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        data = []
+        for piece in str(raw).replace(",", " ").split():
+            piece = piece.strip()
+            if piece:
+                data.append(piece)
+    if isinstance(data, list):
+        return [str(x).strip() for x in data if str(x).strip()]
+    return []
 
 
 def generate_plain_key() -> str:
@@ -134,6 +172,21 @@ async def _migrate_db(db) -> None:
         await db.execute(
             "ALTER TABLE api_keys ADD COLUMN upstream_id INTEGER"
         )
+    if "key" not in cols:
+        await db.execute(
+            "ALTER TABLE api_keys ADD COLUMN key TEXT"
+        )
+
+    async with db.execute("PRAGMA table_info(upstreams)") as cur:
+        cols = [row[1] for row in await cur.fetchall()]
+    if "protocol" not in cols:
+        await db.execute(
+            "ALTER TABLE upstreams ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai'"
+        )
+    if "models" not in cols:
+        await db.execute(
+            "ALTER TABLE upstreams ADD COLUMN models TEXT NOT NULL DEFAULT '[]'"
+        )
 
     await _ensure_default_upstream(db)
 
@@ -158,6 +211,7 @@ async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id
     plain = generate_plain_key()
     row = {
         "key_hash": _hash_key(plain),
+        "key": plain,
         "key_prefix": _prefix_of(plain),
         "name": name,
         "status": "active",
@@ -168,8 +222,8 @@ async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id
     async with aiosqlite.connect(settings.db_file) as db:
         cur = await db.execute(
             """INSERT INTO api_keys
-               (key_hash, key_prefix, name, status, upstream_id, created_at, expires_at)
-               VALUES (:key_hash, :key_prefix, :name, :status, :upstream_id, :created_at, :expires_at)""",
+               (key_hash, key, key_prefix, name, status, upstream_id, created_at, expires_at)
+               VALUES (:key_hash, :key, :key_prefix, :name, :status, :upstream_id, :created_at, :expires_at)""",
             row,
         )
         await db.commit()
@@ -189,7 +243,9 @@ async def get_key_by_hash(key_hash: str) -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,)
+            "SELECT id, key_prefix, name, status, upstream_id, created_at, expires_at, "
+            "last_used_at, request_count FROM api_keys WHERE key_hash = ?",
+            (key_hash,),
         )
         r = await cur.fetchone()
         return dict(r) if r else None
@@ -237,6 +293,33 @@ async def revoke_key(key_id: int) -> bool:
         )
         await db.commit()
         return cur.rowcount > 0
+
+
+async def reset_key(key_id: int) -> Optional[dict]:
+    """重置密钥：生成一把新明文替换 key/key_hash/key_prefix，原 key 立即失效。
+
+    保留该密钥的 id/name/upstream/统计/过期时间（视为同一把钥匙换锁芯）。
+    返回含新明文 key 的记录（仅此一次），供后台回显；密钥不存在或非 active 时返回 None。
+    旧的 key_hash 被覆盖后网关即无法再放行旧明文，因此已泄露的密钥也能通过重置止血。
+    """
+    plain = generate_plain_key()
+    async with aiosqlite.connect(settings.db_file) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "UPDATE api_keys SET key_hash = ?, key = ?, key_prefix = ? "
+            "WHERE id = ? AND status = 'active'",
+            (_hash_key(plain), plain, _prefix_of(plain), key_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        cur = await db.execute(
+            "SELECT id, key, key_prefix, name, status, upstream_id, created_at, expires_at "
+            "FROM api_keys WHERE id = ?",
+            (key_id,),
+        )
+        r = await cur.fetchone()
+        await db.commit()
+        return dict(r) if r else None
 
 
 async def record_usage(key_id: int) -> None:
@@ -431,45 +514,61 @@ async def list_upstreams() -> list[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
             "FROM upstreams ORDER BY is_default DESC, id ASC"
         )
         rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        return [_upstream_row(r) for r in rows]
+
+
+def _upstream_row(r) -> dict:
+    """把上游行转 dict，并把 models 存储文本解码为列表。"""
+    d = dict(r)
+    d["models"] = _models_from_text(d.get("models"))
+    return d
 
 
 async def get_upstream(upstream_id: int) -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
             "FROM upstreams WHERE id = ?",
             (upstream_id,),
         )
         r = await cur.fetchone()
-        return dict(r) if r else None
+        return _upstream_row(r) if r else None
 
 
 async def get_default_upstream() -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, is_default, created_at "
+            "SELECT id, name, base_url, api_key, protocol, models, is_default, created_at "
             "FROM upstreams WHERE is_default = 1 LIMIT 1"
         )
         r = await cur.fetchone()
-        return dict(r) if r else None
+        return _upstream_row(r) if r else None
 
 
-async def create_upstream(name: str, base_url: str, api_key: str = "", is_default: bool = False) -> dict:
+async def create_upstream(
+    name: str,
+    base_url: str,
+    api_key: str = "",
+    protocol: str = "openai",
+    is_default: bool = False,
+    models=None,
+) -> dict:
+    protocol = protocol if protocol in ("openai", "anthropic") else "openai"
+    models_text = _models_to_text(models)
     now = _now()
     async with aiosqlite.connect(settings.db_file) as db:
         if is_default:
             await db.execute("UPDATE upstreams SET is_default = 0")
         cur = await db.execute(
-            """INSERT INTO upstreams (name, base_url, api_key, is_default, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, base_url.rstrip("/"), api_key, 1 if is_default else 0, now),
+            """INSERT INTO upstreams (name, base_url, api_key, protocol, models, is_default, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (name, base_url.rstrip("/"), api_key, protocol, models_text, 1 if is_default else 0, now),
         )
         await db.commit()
         return {
@@ -477,19 +576,32 @@ async def create_upstream(name: str, base_url: str, api_key: str = "", is_defaul
             "name": name,
             "base_url": base_url.rstrip("/"),
             "api_key": api_key,
+            "protocol": protocol,
+            "models": _models_from_text(models_text),
             "is_default": is_default,
             "created_at": now,
         }
 
 
-async def update_upstream(upstream_id: int, name: str, base_url: str, api_key: str = "", is_default: bool = False) -> bool:
+async def update_upstream(
+    upstream_id: int,
+    name: str,
+    base_url: str,
+    api_key: str = "",
+    protocol: str = "openai",
+    is_default: bool = False,
+    models=None,
+) -> bool:
+    protocol = protocol if protocol in ("openai", "anthropic") else "openai"
+    models_text = _models_to_text(models)
     async with aiosqlite.connect(settings.db_file) as db:
         if is_default:
             await db.execute("UPDATE upstreams SET is_default = 0 WHERE id != ?", (upstream_id,))
         cur = await db.execute(
-            """UPDATE upstreams SET name = ?, base_url = ?, api_key = ?, is_default = ?
+            """UPDATE upstreams SET name = ?, base_url = ?, api_key = ?, protocol = ?,
+                   models = ?, is_default = ?
                WHERE id = ?""",
-            (name, base_url.rstrip("/"), api_key, 1 if is_default else 0, upstream_id),
+            (name, base_url.rstrip("/"), api_key, protocol, models_text, 1 if is_default else 0, upstream_id),
         )
         await db.commit()
         return cur.rowcount > 0
@@ -526,17 +638,17 @@ async def get_upstream_for_key(key_id: int) -> Optional[dict]:
         upstream_id = row[0]
         if upstream_id:
             cur = await db.execute(
-                "SELECT id, name, base_url, api_key, is_default FROM upstreams WHERE id = ?",
+                "SELECT id, name, base_url, api_key, protocol, models, is_default FROM upstreams WHERE id = ?",
                 (upstream_id,),
             )
             r = await cur.fetchone()
             if r:
-                return dict(r)
+                return _upstream_row(r)
         cur = await db.execute(
-            "SELECT id, name, base_url, api_key, is_default FROM upstreams WHERE is_default = 1 LIMIT 1"
+            "SELECT id, name, base_url, api_key, protocol, models, is_default FROM upstreams WHERE is_default = 1 LIMIT 1"
         )
         r = await cur.fetchone()
-        return dict(r) if r else None
+        return _upstream_row(r) if r else None
 
 
 async def update_key_upstream(key_id: int, upstream_id: Optional[int]) -> bool:

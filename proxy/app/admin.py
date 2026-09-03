@@ -83,11 +83,25 @@ async def revoke_key(key_id: int) -> dict:
     return {"message": "已吊销"}
 
 
+@_admin_router.post("/keys/{key_id}/reset")
+async def reset_key(key_id: int) -> dict:
+    """重置密钥：新明文替换旧值并回显一次，旧 key 立即失效。"""
+    record = await db.reset_key(key_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="密钥不存在或已吊销")
+    return record
+
+
 @_admin_router.get("/keys/{key_id}/reveal")
 async def reveal_key(key_id: int) -> dict:
     key = await db.get_key_full(key_id)
     if not key:
         raise HTTPException(status_code=404, detail="密钥不存在")
+    if not key.get("key"):
+        raise HTTPException(
+            status_code=410,
+            detail="该密钥创建于明文回显功能上线之前，无明文可回显；请新建密钥以获取完整 sk",
+        )
     return {"id": key["id"], "key": key["key"]}
 
 
@@ -171,12 +185,16 @@ async def get_upstream(upstream_id: int) -> dict:
 
 @_admin_router.post("/upstreams", response_model=UpstreamItem)
 async def create_upstream(body: UpstreamCreateRequest) -> dict:
-    return await db.create_upstream(body.name, body.base_url, body.api_key, body.is_default)
+    return await db.create_upstream(
+        body.name, body.base_url, body.api_key, body.protocol, body.is_default, models=body.models
+    )
 
 
 @_admin_router.put("/upstreams/{upstream_id}", response_model=UpstreamItem)
 async def update_upstream(upstream_id: int, body: UpstreamUpdateRequest) -> dict:
-    ok = await db.update_upstream(upstream_id, body.name, body.base_url, body.api_key, body.is_default)
+    ok = await db.update_upstream(
+        upstream_id, body.name, body.base_url, body.api_key, body.protocol, body.is_default, models=body.models
+    )
     if not ok:
         raise HTTPException(status_code=404, detail="上游不存在")
     up = await db.get_upstream(upstream_id)

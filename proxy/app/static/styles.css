@@ -291,17 +291,50 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
 .table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th, .table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td.models-cell { max-width: 280px; white-space: normal; line-height: 1.9; }
 .table th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
 .table tbody tr:hover { background: var(--bg-soft); }
+.table td .btn + .btn { margin-left: 8px; }
 .muted { color: var(--text-mute); text-align: center; }
 
-.badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 650; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 650; background: rgba(148,163,184,.18); color: var(--text-dim); }
 .badge-active { background: rgba(34,197,94,.15); color: var(--success); }
 .badge-revoked { background: rgba(239,68,68,.15); color: var(--danger); }
+.badge-anthropic { background: rgba(217,119,6,.18); color: #fbbf24; }
+.badge-model { background: rgba(99,102,241,.14); color: var(--primary); }
 
 .form-rows { display: flex; flex-direction: column; gap: 14px; }
 .check-row { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 13px; }
 .check-row input { width: auto; }
+
+/* ===== 模型下拉 Combobox ===== */
+.model-picker { position: relative; }
+.model-picker > input { width: 100%; padding-right: 38px; }
+.model-picker-caret {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border: 0;
+  background: transparent; color: var(--text-mute);
+  cursor: pointer; border-radius: 7px;
+}
+.model-picker-caret:hover { background: var(--bg-soft); color: var(--text); }
+.model-menu {
+  position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 80;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  max-height: 232px; overflow-y: auto; padding: 5px;
+  font-size: 13px;
+}
+.model-menu-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text); font-size: 13px;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.model-menu-item:hover, .model-menu-item.hl { background: var(--bg-soft); color: var(--primary); }
+.model-menu-item.sel { color: var(--primary); font-weight: 600; }
+.model-menu-item.sel::before { content: "✓ "; font-weight: 700; }
+.model-menu-empty { padding: 10px 12px; color: var(--text-mute); font-size: 12px; line-height: 1.6; }
 
 /* ===== 模态框 ===== */
 .modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
@@ -466,6 +499,328 @@ input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3p
   margin-top: 4px;
   line-height: 1.4;
 }
+
+/* ===== Markdown 消息气泡 ===== */
+.chat-msg-assistant .chat-bubble.chat-bubble-md {
+  padding: 6px 14px 12px;
+  max-width: 100%;
+}
+.chat-bubble-md .chat-bubble-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 2px;
+}
+.chat-bubble-md .copy-msg-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.chat-bubble-md .copy-msg-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+  background: var(--bg-soft);
+}
+.chat-bubble-md .copy-msg-btn.copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ===== "正在思考" typing 指示器 ===== */
+.chat-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0 1px;
+  color: var(--text-mute);
+  line-height: 1;
+}
+.chat-typing .typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  opacity: .3;
+  animation: chat-typing-bounce 1.2s infinite ease-in-out;
+}
+.chat-typing .typing-dot:nth-child(2) {
+  animation-delay: .18s;
+}
+.chat-typing .typing-dot:nth-child(3) {
+  animation-delay: .36s;
+}
+.chat-typing .typing-text {
+  margin-left: 3px;
+  font-size: 12px;
+}
+@keyframes chat-typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: .3;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-typing .typing-dot {
+    animation: none;
+    opacity: .45;
+  }
+}
+
+/* 助手消息列：avatar | col(bubble + actions) */
+.chat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 气泡外的快捷工具条（复制/点赞/点踩/朗读/重新生成/分享） */
+.chat-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 0;
+  color: var(--text-mute);
+  min-height: 28px;
+}
+.chat-act-btn {
+  background: transparent;
+  border: none;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1;
+  font-family: inherit;
+  transition: background .15s, color .15s;
+  position: relative;
+}
+.chat-act-btn:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.chat-act-btn:active {
+  background: var(--border);
+}
+.chat-act-btn .act-label {
+  /* 仅屏幕阅读器可见；让按钮可访问 + 复制按钮可显示“已复制” */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.chat-act-btn.copied { color: var(--success); }
+.chat-act-btn.liked { color: var(--success); background: var(--bg-soft); }
+.chat-act-btn.disliked { color: var(--danger); background: var(--bg-soft); }
+.chat-act-btn.speaking { color: var(--primary); background: var(--bg-soft); }
+.chat-act-btn.loading { pointer-events: none; color: var(--text-dim); }
+.chat-act-btn.loading svg { animation: act-spin .9s linear infinite; transform-origin: 50% 50%; }
+@keyframes act-spin { to { transform: rotate(360deg); } }
+
+.chat-bubble-content {
+  white-space: normal;
+  word-break: break-word;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.chat-bubble-content.raw {
+  white-space: pre-wrap;
+  font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.chat-bubble-content .md-plain {
+  margin: 0;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* markdown 基础排版 */
+.chat-bubble-content p { margin: 6px 0; }
+.chat-bubble-content p:first-child { margin-top: 2px; }
+.chat-bubble-content p:last-child { margin-bottom: 2px; }
+.chat-bubble-content h1,
+.chat-bubble-content h2,
+.chat-bubble-content h3,
+.chat-bubble-content h4,
+.chat-bubble-content h5,
+.chat-bubble-content h6 {
+  margin: 12px 0 6px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.chat-bubble-content h1 { font-size: 18px; }
+.chat-bubble-content h2 { font-size: 16px; }
+.chat-bubble-content h3 { font-size: 15px; }
+.chat-bubble-content h4, .chat-bubble-content h5, .chat-bubble-content h6 { font-size: 14px; }
+.chat-bubble-content ul,
+.chat-bubble-content ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.chat-bubble-content li { margin: 3px 0; }
+.chat-bubble-content li > ul,
+.chat-bubble-content li > ol { margin: 2px 0; }
+.chat-bubble-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.chat-bubble-content blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-dim);
+}
+.chat-bubble-content blockquote p { margin: 4px 0; }
+.chat-bubble-content code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 85%;
+  background: rgba(110, 118, 129, .18);
+  padding: 2px 5px;
+  border-radius: 5px;
+  word-break: break-all;
+}
+.chat-bubble-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.chat-bubble-content img {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin: 8px auto;
+}
+.chat-bubble-content table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.chat-bubble-content th,
+.chat-bubble-content td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  white-space: normal;
+}
+.chat-bubble-content th {
+  background: var(--bg-soft);
+  font-weight: 600;
+}
+.chat-bubble-content del { color: var(--text-mute); }
+.chat-bubble-content input[type="checkbox"] { width: auto; }
+
+/* 代码块容器 */
+.chat-bubble-content .code-block {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d1117;
+}
+.chat-bubble-content .code-block .code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px 5px 14px;
+  background: #161b22;
+  border-bottom: 1px solid #262c36;
+  font-size: 12px;
+}
+.chat-bubble-content .code-block .code-lang {
+  color: #8b949e;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  text-transform: lowercase;
+  user-select: none;
+}
+.chat-bubble-content .copy-code-btn {
+  background: transparent;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .15s;
+}
+.chat-bubble-content .copy-code-btn:hover {
+  color: #e6edf3;
+  border-color: #8b949e;
+  background: #21262d;
+}
+.chat-bubble-content .copy-code-btn.copied {
+  color: #3fb950;
+  border-color: #3fb950;
+}
+.chat-bubble-content .code-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: #0d1117;
+  font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre;
+  tab-size: 4;
+}
+.chat-bubble-content .code-block pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  word-break: normal;
+  color: #e6edf3;
+}
+
+/* hljs 代码高亮配色（GitHub Dark 风格，适配暗/亮主题下的深色代码块） */
+.hljs-comment, .hljs-quote { color: #8b949e; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-subst { color: #ff7b72; }
+.hljs-literal, .hljs-number, .hljs-variable, .hljs-template-variable,
+.hljs-tag .hljs-attr { color: #79c0ff; }
+.hljs-string, .hljs-doctag, .hljs-regexp { color: #a5d6ff; }
+.hljs-title, .hljs-section, .hljs-selector-id { color: #d2a8ff; }
+.hljs-type, .hljs-class .hljs-title, .hljs-built_in, .hljs-builtin-name { color: #ffa657; }
+.hljs-attr, .hljs-attribute, .hljs-symbol, .hljs-bullet, .hljs-link { color: #79c0ff; }
+.hljs-meta, .hljs-meta .hljs-keyword { color: #ff7b72; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+.hljs-addition { color: #aff5b4; background-color: #033a16; }
+.hljs-deletion { color: #ffdcd7; background-color: #67060c; }
 
 @media (max-width: 900px) {
   .chat-wrap {

@@ -107,6 +107,8 @@ class UpstreamItem(BaseModel):
     name: str
     base_url: str
     api_key: str = ""
+    protocol: str = "openai"
+    models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool
     created_at: str
 
@@ -115,6 +117,8 @@ class UpstreamCreateRequest(BaseModel):
     name: str
     base_url: str
     api_key: str = ""
+    protocol: str = "openai"
+    models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool = False
 
 
@@ -122,6 +126,8 @@ class UpstreamUpdateRequest(BaseModel):
     name: str
     base_url: str
     api_key: str = ""
+    protocol: str = "openai"
+    models: list[str] = Field(default_factory=list, description="该上游可用模型列表，可空")
     is_default: bool = False
 
 
