@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Gateway 授权管理系统</title>
-  <link rel="stylesheet" href="/styles.css?v=20260904e" />
+  <link rel="stylesheet" href="/styles.css?v=20260904g" />
 </head>
 <body>
   <!-- 登录视图 -->
@@ -12,9 +12,9 @@
     <div class="login-card">
       <div class="login-logo">
         <span class="logo-dot"></span>
-        <h1>AI Gateway</h1>
+        <h1>LLM API Gateway</h1>
       </div>
-      <p class="login-sub">授权管理系统</p>
+      <p class="login-sub">大模型API网关系统</p>
       <form id="login-form" class="login-form">
         <label class="field">
           <span>用户名</span>
@@ -31,7 +31,7 @@
     </div>
   </div>
 
-  <!-- 主应用 -->
+  <!-- 主应用（视图片段按需加载到 #view-root） -->
   <div id="app-view" class="app" hidden>
     <aside class="sidebar">
       <div class="brand">
@@ -66,362 +66,9 @@
           <button id="theme-toggle" class="icon-btn" title="切换主题">🌙</button>
         </div>
       </header>
-
-      <!-- 概览 -->
-      <section id="view-overview" class="view">
-        <div class="cards" id="stat-cards">
-          <div class="card stat"><div class="stat-num" id="stat-total">-</div><div class="stat-label">密钥总数</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-active">-</div><div class="stat-label">活跃密钥</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-users">-</div><div class="stat-label">用户总数</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-today">-</div><div class="stat-label">今日调用</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-today-tokens">-</div><div class="stat-label">今日 Token</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-cache-today">-</div><div class="stat-label">今日缓存命中</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-calls">-</div><div class="stat-label">累计调用</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-total-tokens">-</div><div class="stat-label">累计 Token</div></div>
-          <div class="card stat"><div class="stat-num" id="stat-cache-total">-</div><div class="stat-label">累计缓存命中</div></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3>最近密钥</h3></div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>前缀</th><th>名称</th><th>状态</th><th>调用次数</th><th>创建时间</th></tr></thead>
-              <tbody id="overview-tbody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- 用量统计 -->
-      <section id="view-stats" class="view" hidden>
-        <div class="card stats-bar">
-          <div class="stats-gran-tabs" id="stats-gran" role="tablist" aria-label="统计粒度">
-            <button type="button" class="stats-gran-tab active" data-gran="day" role="tab" aria-selected="true">每日</button>
-            <button type="button" class="stats-gran-tab" data-gran="week" role="tab" aria-selected="false">每周</button>
-            <button type="button" class="stats-gran-tab" data-gran="month" role="tab" aria-selected="false">每月</button>
-          </div>
-          <div class="inline-tools">
-            <select id="stats-days" class="select-sm" title="统计窗口"></select>
-            <select id="stats-metric" class="select-sm" title="趋势指标">
-              <option value="total_tokens">总 Token</option>
-              <option value="calls">调用次数</option>
-              <option value="input_tokens">输入 Token</option>
-              <option value="output_tokens">输出 Token</option>
-              <option value="cache_read_tokens">缓存命中</option>
-            </select>
-            <select id="rank-top" class="select-sm" title="排行条数">
-              <option value="5">Top 5</option>
-              <option value="10" selected>Top 10</option>
-              <option value="20">Top 20</option>
-            </select>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-head">
-            <h3 id="trend-title">Token 用量趋势（每日）</h3>
-            <span class="trend-legend" id="trend-legend"><i style="background:var(--primary)"></i>总 Token</span>
-          </div>
-          <div class="chart-wrap">
-            <svg id="trend-chart" class="trend-chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3>密钥用量排行</h3></div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>#</th><th>密钥</th><th class="num">调用次数</th><th class="num">输入 Token</th><th class="num">输出 Token</th><th class="num">缓存命中</th><th class="num">总 Token</th></tr></thead>
-              <tbody id="rank-tbody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3 id="matrix-title">密钥 × 每日明细</h3><span class="matrix-hint">单元格为该周期消耗的总 Token，悬浮查看输入/输出/缓存命中拆分</span></div>
-          <div class="table-wrap matrix-wrap">
-            <table class="table matrix-table">
-              <thead id="matrix-head"></thead>
-              <tbody id="matrix-tbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- 密钥管理 -->
-      <section id="view-keys" class="view" hidden>
-        <div class="card">
-          <div class="card-head">
-            <h3>API 密钥</h3>
-            <button class="btn btn-primary admin-only" id="create-key-btn">+ 新建密钥</button>
-          </div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>ID</th><th>前缀</th><th>名称</th><th>上游</th><th class="admin-only">归属</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th>调用次数</th><th class="admin-only">操作</th></tr></thead>
-              <tbody id="keys-tbody"><tr><td colspan="11" class="muted">加载中…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- 上游管理 -->
-      <section id="view-upstreams" class="view" hidden>
-        <div class="card">
-          <div class="card-head">
-            <h3>上游列表</h3>
-            <button class="btn btn-primary" id="create-upstream-btn">+ 添加上游</button>
-          </div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>协议</th><th>模型</th><th>默认</th><th>Token 采集</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="upstreams-tbody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- 用户管理 -->
-      <section id="view-users" class="view" hidden>
-        <div class="card">
-          <div class="card-head">
-            <h3>用户列表</h3>
-            <button class="btn btn-primary" id="create-user-btn">+ 新建用户</button>
-          </div>
-          <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead>
-              <tbody id="users-tbody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- 对话 -->
-      <section id="view-chat" class="view" hidden>
-        <div class="chat-wrap">
-          <div class="chat-side">
-            <div class="card">
-              <div class="card-head"><h3>设置</h3></div>
-              <div class="form-rows">
-                <label class="field"><span>API Key 来源</span>
-                  <select id="chat-key-mode">
-                    <option value="select">从列表选择</option>
-                    <option value="manual">手动输入</option>
-                  </select>
-                </label>
-                <div id="chat-key-select-wrap">
-                  <label class="field"><span>选择密钥</span>
-                    <select id="chat-key">
-                      <option value="">请选择密钥</option>
-                    </select>
-                    <div id="chat-key-error" class="field-error" hidden></div>
-                  </label>
-                </div>
-                <div id="chat-key-manual-wrap" hidden>
-                  <label class="field"><span>手动输入 Key</span>
-                    <input type="password" id="chat-key-manual" placeholder="sk-xxxx" />
-                  </label>
-                </div>
-                <label class="field"><span>模型</span>
-                  <div class="model-picker" id="model-picker">
-                    <input type="text" id="chat-model"
-                      placeholder="点击下拉选择，或直接输入模型名" autocomplete="off" spellcheck="false" />
-                    <button type="button" class="model-picker-caret" id="chat-model-caret"
-                      title="选择模型" aria-label="选择模型"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-                    <div class="model-menu" id="chat-model-menu" hidden></div>
-                  </div>
-                </label>
-                <label class="field"><span>Temperature</span>
-                  <input type="number" id="chat-temp" value="0.7" step="0.1" min="0" max="2" />
-                </label>
-                <label class="check-row"><input type="checkbox" id="chat-stream" checked /> 流式输出</label>
-                <label class="check-row"><input type="checkbox" id="chat-raw" /> 显示原始响应</label>
-                <button class="btn btn-ghost btn-block" id="chat-clear-ctx">清空对话</button>
-              </div>
-            </div>
-          </div>
-          <div class="chat-main card">
-            <div id="chat-messages" class="chat-messages">
-              <div class="chat-msg chat-msg-system">
-                <div class="chat-bubble">选择密钥和模型后开始对话吧～</div>
-              </div>
-            </div>
-            <div class="chat-input-wrap">
-              <textarea id="chat-input" class="chat-input" rows="2" placeholder="输入消息，按 Enter 发送（Shift+Enter 换行）"></textarea>
-              <button class="btn btn-primary" id="chat-send">发送</button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <!-- 各视图 HTML 片段按需挂载于此 -->
+      <div id="view-root"></div>
     </main>
-  </div>
-
-  <!-- 新建密钥模态框 -->
-  <div id="modal-create" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3>新建 API 密钥</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <label class="field"><span>名称（可选）</span>
-          <input type="text" id="create-name" placeholder="如：内部测试" />
-        </label>
-        <label class="field"><span>上游</span>
-          <select id="create-upstream">
-            <option value="">默认上游</option>
-          </select>
-          <span class="field-hint">不选则使用默认上游</span>
-        </label>
-        <label class="field"><span>归属用户</span>
-          <select id="create-owner">
-            <option value="">不归属（系统密钥，仅管理员可见）</option>
-          </select>
-          <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
-        </label>
-        <label class="field"><span>过期时间（可选，留空为永不过期）</span>
-          <div class="datetime-row">
-            <input type="date" id="create-expires-date" title="选择过期日期" />
-            <input type="time" id="create-expires-time" title="选择过期时刻（默认当天 23:59）" />
-            <button type="button" class="btn btn-ghost btn-sm" id="create-expires-clear" title="清除过期时间" hidden>清除</button>
-          </div>
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" data-close>取消</button>
-        <button class="btn btn-primary" id="create-submit">生成密钥</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 编辑密钥名称模态框 -->
-  <div id="modal-key-rename" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3>编辑密钥名称</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="key-rename-id" />
-        <div class="field"><span>密钥</span>
-          <code id="key-rename-prefix" class="muted-key"></code>
-        </div>
-        <label class="field"><span>名称</span>
-          <input type="text" id="key-rename-name" placeholder="如：内部测试（留空表示未命名）" maxlength="60" />
-          <span class="field-hint">仅修改备注名称，不影响 key 明文、绑定上游与调用统计；用量统计将同步显示新名称</span>
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" data-close>取消</button>
-        <button class="btn btn-primary" id="key-rename-submit">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 设置/转移密钥归属模态框 -->
-  <div id="modal-key-owner" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3>设置密钥归属</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="key-owner-id" />
-        <div class="field"><span>密钥</span>
-          <code id="key-owner-prefix" class="muted-key"></code>
-        </div>
-        <label class="field"><span>归属用户</span>
-          <select id="key-owner">
-            <option value="">不归属（系统密钥，仅管理员可见）</option>
-          </select>
-          <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" data-close>取消</button>
-        <button class="btn btn-primary" id="key-owner-submit">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 展示明文 key 模态框（新建/重置共用） -->
-  <div id="modal-key" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3 id="modal-key-title">密钥已生成</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <p class="warn-text" id="modal-key-warn">请立即复制保存，此明文密钥仅显示一次，丢失后需重新生成。</p>
-        <div class="key-box">
-          <code id="new-key-text"></code>
-          <button class="btn btn-ghost btn-sm" id="copy-key">复制</button>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-primary" data-close>我已保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 新建/编辑用户模态框 -->
-  <div id="modal-user" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3 id="user-modal-title">新建用户</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="user-edit-id" />
-        <label class="field"><span>用户名</span>
-          <input type="text" id="user-username" placeholder="请输入用户名" />
-        </label>
-        <label class="field"><span>密码</span>
-          <input type="password" id="user-password" placeholder="请输入密码" />
-          <span class="field-hint" id="user-password-hint">编辑时留空则不修改密码</span>
-        </label>
-        <label class="field"><span>角色</span>
-          <select id="user-role">
-            <option value="viewer">普通用户</option>
-            <option value="admin">管理员（admin）</option>
-          </select>
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" data-close>取消</button>
-        <button class="btn btn-primary" id="user-submit">确定</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 新建/编辑上游模态框 -->
-  <div id="modal-upstream" class="modal" hidden>
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="card-head"><h3 id="upstream-modal-title">添加上游</h3><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="upstream-edit-id" />
-        <label class="field"><span>名称</span>
-          <input type="text" id="upstream-name" placeholder="如：vLLM 本地服务" />
-        </label>
-        <label class="field"><span>基础地址</span>
-          <input type="text" id="upstream-base-url" placeholder="如：http://127.0.0.1:8000" />
-          <span class="field-hint">OpenAI 上游填根地址（如 http://host:port）；Anthropic 上游填兼容端点（如 https://api.deepseek.com/anthropic）</span>
-        </label>
-        <label class="field"><span>协议类型</span>
-          <select id="upstream-protocol">
-            <option value="openai">OpenAI（Chat Completions）</option>
-            <option value="anthropic">Anthropic（Messages API）</option>
-          </select>
-          <span class="field-hint">网关自动识别客户端方言并翻译，上游只需标注它说的是哪种协议</span>
-        </label>
-        <label class="field"><span>可用模型（可选，一行一个）</span>
-          <textarea id="upstream-models" rows="4"
-            placeholder="如：&#10;deepseek-chat&#10;deepseek-reasoner&#10;gpt-4o&#10;&#10;一行一个模型名，留空表示不限制/未配置"></textarea>
-          <span class="field-hint">在对话测试页会作为模型下拉候选；留空则只能手动输入</span>
-        </label>
-        <label class="field"><span>上游 API Key（可选）</span>
-          <input type="text" id="upstream-api-key" placeholder="如为空则不设置 Authorization 头" />
-        </label>
-        <label class="check-row">
-          <input type="checkbox" id="upstream-is-default" /> 设为默认上游
-        </label>
-        <label class="check-row">
-          <input type="checkbox" id="upstream-inject-usage" /> 流式自动补 include_usage
-        </label>
-        <div class="field-hint" style="margin-top:-6px">OpenAI 方言流式请求自动补 <code>stream_options.include_usage</code>，让 Ollama / vLLM 等上游在流末尾上报 token 用量。非流式不受影响；Anthropic 上游忽略此项。</div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-ghost" data-close>取消</button>
-        <button class="btn btn-primary" id="upstream-submit">确定</button>
-      </div>
-    </div>
   </div>
 
   <!-- Toast -->
@@ -431,6 +78,6 @@
   <script src="/vendor/marked.min.js?v=20260903q"></script>
   <script src="/vendor/highlight.min.js?v=20260903q"></script>
   <script src="/vendor/purify.min.js?v=20260903q"></script>
-  <script src="/app.js?v=20260904e"></script>
+  <script type="module" src="/js/main.js?v=20260904j"></script>
 </body>
 </html>

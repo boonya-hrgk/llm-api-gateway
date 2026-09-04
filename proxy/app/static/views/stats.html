@@ -1,0 +1,51 @@
+<section id="view-stats" class="view" hidden>
+  <div class="card stats-bar">
+    <div class="stats-gran-tabs" id="stats-gran" role="tablist" aria-label="统计粒度">
+      <button type="button" class="stats-gran-tab active" data-gran="day" role="tab" aria-selected="true">每日</button>
+      <button type="button" class="stats-gran-tab" data-gran="week" role="tab" aria-selected="false">每周</button>
+      <button type="button" class="stats-gran-tab" data-gran="month" role="tab" aria-selected="false">每月</button>
+    </div>
+    <div class="inline-tools">
+      <select id="stats-days" class="select-sm" title="统计窗口"></select>
+      <select id="stats-metric" class="select-sm" title="趋势指标">
+        <option value="total_tokens">总 Token</option>
+        <option value="calls">调用次数</option>
+        <option value="input_tokens">输入 Token</option>
+        <option value="output_tokens">输出 Token</option>
+        <option value="cache_read_tokens">缓存命中</option>
+      </select>
+      <select id="rank-top" class="select-sm" title="排行条数">
+        <option value="5">Top 5</option>
+        <option value="10" selected>Top 10</option>
+        <option value="20">Top 20</option>
+      </select>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <h3 id="trend-title">Token 用量趋势（每日）</h3>
+      <span class="trend-legend" id="trend-legend"><i style="background:var(--primary)"></i>总 Token</span>
+    </div>
+    <div class="chart-wrap">
+      <svg id="trend-chart" class="trend-chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>密钥用量排行</h3></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>#</th><th>密钥</th><th class="num">调用次数</th><th class="num">输入 Token</th><th class="num">输出 Token</th><th class="num">缓存命中</th><th class="num">总 Token</th></tr></thead>
+        <tbody id="rank-tbody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3 id="matrix-title">密钥 × 每日明细</h3><span class="matrix-hint">单元格为该周期消耗的总 Token，悬浮查看输入/输出/缓存命中拆分</span></div>
+    <div class="table-wrap matrix-wrap">
+      <table class="table matrix-table">
+        <thead id="matrix-head"></thead>
+        <tbody id="matrix-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>

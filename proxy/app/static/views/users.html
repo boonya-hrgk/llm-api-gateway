@@ -1,0 +1,42 @@
+<section id="view-users" class="view" hidden>
+  <div class="card">
+    <div class="card-head">
+      <h3>用户列表</h3>
+      <button class="btn btn-primary" id="create-user-btn">+ 新建用户</button>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead>
+        <tbody id="users-tbody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 新建/编辑用户模态框 -->
+<div id="modal-user" class="modal" hidden>
+  <div class="modal-mask"></div>
+  <div class="modal-card">
+    <div class="card-head"><h3 id="user-modal-title">新建用户</h3><button class="icon-btn" data-close>✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="user-edit-id" />
+      <label class="field"><span>用户名</span>
+        <input type="text" id="user-username" placeholder="请输入用户名" />
+      </label>
+      <label class="field"><span>密码</span>
+        <input type="password" id="user-password" placeholder="请输入密码" />
+        <span class="field-hint" id="user-password-hint">编辑时留空则不修改密码</span>
+      </label>
+      <label class="field"><span>角色</span>
+        <select id="user-role">
+          <option value="viewer">普通用户</option>
+          <option value="admin">管理员（admin）</option>
+        </select>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="user-submit">确定</button>
+    </div>
+  </div>
+</div>

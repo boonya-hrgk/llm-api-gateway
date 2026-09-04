@@ -1,0 +1,114 @@
+<section id="view-keys" class="view" hidden>
+  <div class="card">
+    <div class="card-head">
+      <h3>API 密钥</h3>
+      <button class="btn btn-primary admin-only" id="create-key-btn">+ 新建密钥</button>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>ID</th><th>前缀</th><th>名称</th><th>上游</th><th class="admin-only">归属</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th>调用次数</th><th class="admin-only">操作</th></tr></thead>
+        <tbody id="keys-tbody"><tr><td colspan="11" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 新建密钥模态框 -->
+<div id="modal-create" class="modal" hidden>
+  <div class="modal-mask"></div>
+  <div class="modal-card">
+    <div class="card-head"><h3>新建 API 密钥</h3><button class="icon-btn" data-close>✕</button></div>
+    <div class="modal-body">
+      <label class="field"><span>名称（可选）</span>
+        <input type="text" id="create-name" placeholder="如：内部测试" />
+      </label>
+      <label class="field"><span>上游</span>
+        <select id="create-upstream">
+          <option value="">默认上游</option>
+        </select>
+        <span class="field-hint">不选则使用默认上游</span>
+      </label>
+      <label class="field"><span>归属用户</span>
+        <select id="create-owner">
+          <option value="">不归属（系统密钥，仅管理员可见）</option>
+        </select>
+        <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
+      </label>
+      <label class="field"><span>过期时间（可选，留空为永不过期）</span>
+        <div class="datetime-row">
+          <input type="date" id="create-expires-date" title="选择过期日期" />
+          <input type="time" id="create-expires-time" title="选择过期时刻（默认当天 23:59）" />
+          <button type="button" class="btn btn-ghost btn-sm" id="create-expires-clear" title="清除过期时间" hidden>清除</button>
+        </div>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="create-submit">生成密钥</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑密钥名称模态框 -->
+<div id="modal-key-rename" class="modal" hidden>
+  <div class="modal-mask"></div>
+  <div class="modal-card">
+    <div class="card-head"><h3>编辑密钥名称</h3><button class="icon-btn" data-close>✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="key-rename-id" />
+      <div class="field"><span>密钥</span>
+        <code id="key-rename-prefix" class="muted-key"></code>
+      </div>
+      <label class="field"><span>名称</span>
+        <input type="text" id="key-rename-name" placeholder="如：内部测试（留空表示未命名）" maxlength="60" />
+        <span class="field-hint">仅修改备注名称，不影响 key 明文、绑定上游与调用统计；用量统计将同步显示新名称</span>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="key-rename-submit">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置/转移密钥归属模态框 -->
+<div id="modal-key-owner" class="modal" hidden>
+  <div class="modal-mask"></div>
+  <div class="modal-card">
+    <div class="card-head"><h3>设置密钥归属</h3><button class="icon-btn" data-close>✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="key-owner-id" />
+      <div class="field"><span>密钥</span>
+        <code id="key-owner-prefix" class="muted-key"></code>
+      </div>
+      <label class="field"><span>归属用户</span>
+        <select id="key-owner">
+          <option value="">不归属（系统密钥，仅管理员可见）</option>
+        </select>
+        <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="key-owner-submit">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 展示明文 key 模态框（新建/重置共用） -->
+<div id="modal-key" class="modal" hidden>
+  <div class="modal-mask"></div>
+  <div class="modal-card">
+    <div class="card-head"><h3 id="modal-key-title">密钥已生成</h3><button class="icon-btn" data-close>✕</button></div>
+    <div class="modal-body">
+      <p class="warn-text" id="modal-key-warn">请立即复制保存，此明文密钥仅显示一次，丢失后需重新生成。</p>
+      <div class="key-box">
+        <code id="new-key-text"></code>
+        <button class="btn btn-ghost btn-sm" id="copy-key">复制</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-primary" data-close>我已保存</button>
+    </div>
+  </div>
+</div>

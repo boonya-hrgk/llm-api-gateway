@@ -52,7 +52,7 @@ async def _startup() -> None:
 async def info() -> dict:
     """返回网关基本信息（不涉密）。"""
     return {
-        "name": "AI Gateway 授权管理系统",
+        "name": "LLM API Gateway 大模型API网关系统",
         "version": "1.1.0",
         "target": settings.vllm_target_url,
         "admin_enabled": True,
