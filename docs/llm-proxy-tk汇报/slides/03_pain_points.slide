@@ -1,0 +1,108 @@
+<Slide>
+  <Box style={{
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    padding: 60,
+    display: 'flex',
+    flexDirection: 'column',
+  }}>
+    <Text style={{
+      fontSize: 14,
+      color: '#0EA5E9',
+      letterSpacing: 2,
+      marginBottom: 8,
+    }}>
+      01 背景
+    </Text>
+    <Text style={{
+      fontSize: 40,
+      fontWeight: 'bold',
+      color: '#1F3A8A',
+      marginBottom: 8,
+    }}>
+      三个扎心的现状
+    </Text>
+    <Text style={{
+      fontSize: 16,
+      color: '#64748B',
+      marginBottom: 40,
+    }}>
+      几乎所有团队用大模型的方式，都惊人地一致——
+    </Text>
+
+    <Box style={{
+      display: 'flex',
+      flexDirection: 'row',
+      gap: 24,
+      flex: 1,
+    }}>
+      <Box style={{
+        flex: 1,
+        backgroundColor: '#FEF2F2',
+        borderLeft: '6px solid #DC2626',
+        padding: 24,
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
+        <Text style={{ fontSize: 32 }}>🔓</Text>
+        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#DC2626' }}>
+          裸奔 1：密钥群里飞
+        </Text>
+        <Text style={{ fontSize: 16, color: '#475569', lineHeight: 1.6 }}>
+          1 个 API Key 全组共用，谁用超不知道，谁泄露说不清；月底账单出来，互相猜是谁干的。
+        </Text>
+      </Box>
+
+      <Box style={{
+        flex: 1,
+        backgroundColor: '#FEF2F2',
+        borderLeft: '6px solid #DC2626',
+        padding: 24,
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
+        <Text style={{ fontSize: 32 }}>📤</Text>
+        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#DC2626' }}>
+          裸奔 2：数据公网飞
+        </Text>
+        <Text style={{ fontSize: 16, color: '#475569', lineHeight: 1.6 }}>
+          合同、代码、客户资料贴进公开网页版对话框，数据出了域，追溯无从谈起。
+        </Text>
+      </Box>
+
+      <Box style={{
+        flex: 1,
+        backgroundColor: '#FEF2F2',
+        borderLeft: '6px solid #DC2626',
+        padding: 24,
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
+        <Text style={{ fontSize: 32 }}>⛓️</Text>
+        <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#DC2626' }}>
+          裸奔 3：被模型绑架
+        </Text>
+        <Text style={{ fontSize: 16, color: '#475569', lineHeight: 1.6 }}>
+          一个客户端一个地址、一个 Key、一套配置；想切模型，所有接入方都要改一遍。
+        </Text>
+      </Box>
+    </Box>
+
+    <Text style={{
+      fontSize: 22,
+      fontWeight: 'bold',
+      color: '#1F3A8A',
+      textAlign: 'center',
+      marginTop: 32,
+    }}>
+      大模型在企业里，缺一个"总闸门"。
+    </Text>
+  </Box>
+</Slide>

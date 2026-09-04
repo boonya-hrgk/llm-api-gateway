@@ -1,0 +1,100 @@
+{
+  "filePath": "E:\\AI\\python\\llm-proxy-tk\\docs\\llm-proxy-tk汇报\\AI网关如何在企业中实现大模型自动化编程落地.pptx",
+  "lastCommit": {
+    "01_cover": {
+      "revisionId": "27629782e230e2ec1d0cb3ebf09c5715fda7f99f",
+      "version": 20,
+      "at": "2026-09-04 09:58:44.488"
+    },
+    "02_toc": {
+      "revisionId": "5d04e6be2f112a17c51c6c8d1b865ff7412c4f62",
+      "version": 21,
+      "at": "2026-09-04 09:58:44.787"
+    },
+    "03_pain_points": {
+      "revisionId": "81dc296907594fa6d348a959559aa8edecdeded0",
+      "version": 3,
+      "at": "2026-09-04 09:21:05.247"
+    },
+    "04_positioning": {
+      "revisionId": "da527984979037cb3510d9e353c2cfafb8e077f3",
+      "version": 4,
+      "at": "2026-09-04 09:21:05.405"
+    },
+    "05_what_is_it": {
+      "revisionId": "a9449150ea9af4d862b31c048f6c1e942582b29f",
+      "version": 22,
+      "at": "2026-09-04 09:58:45.031"
+    },
+    "06_architecture": {
+      "revisionId": "68e9534f98e6c7e46184a66f0f2c7d3e837f0860",
+      "version": 6,
+      "at": "2026-09-04 09:21:05.633"
+    },
+    "07_capabilities": {
+      "revisionId": "26e6dab0e5cb62a081478a7c7b77f8b445599648",
+      "version": 7,
+      "at": "2026-09-04 09:21:05.736"
+    },
+    "08_divider_scenarios": {
+      "revisionId": "48f3ff957aa9920727cd559f4e56b6c121c54950",
+      "version": 8,
+      "at": "2026-09-04 09:21:05.765"
+    },
+    "09_decision_table": {
+      "revisionId": "9d93269d7090c10833dcee1cc6ce44401c8740e3",
+      "version": 9,
+      "at": "2026-09-04 09:21:06.031"
+    },
+    "10_internal_local": {
+      "revisionId": "308720135ce8c27e184078ca3ddaead51c8e93ed",
+      "version": 10,
+      "at": "2026-09-04 09:21:06.316"
+    },
+    "11_external_cloud": {
+      "revisionId": "8646f7d400a49a662db350e9b2a75be7084dd47b",
+      "version": 11,
+      "at": "2026-09-04 09:21:06.590"
+    },
+    "12_divider_landing": {
+      "revisionId": "c622ea7cc5ae730a64b9b80d5bbaedda739168b6",
+      "version": 12,
+      "at": "2026-09-04 09:21:06.687"
+    },
+    "13_landing_deploy": {
+      "revisionId": "ded97b8ed06db3150908230706787f223ad77512",
+      "version": 13,
+      "at": "2026-09-04 09:21:06.873"
+    },
+    "14_landing_manage_models": {
+      "revisionId": "1e795a6e5b7bc9f5cca976db4b49e239345009fb",
+      "version": 14,
+      "at": "2026-09-04 09:21:07.103"
+    },
+    "15_landing_sk_assignment": {
+      "revisionId": "970770e44071f7bd7e500d024dddd9311f752add",
+      "version": 15,
+      "at": "2026-09-04 09:21:07.394"
+    },
+    "16_landing_cc_switch": {
+      "revisionId": "ec8b71f698ccf3d9b2c077b9e08a66f7a31b6885",
+      "version": 16,
+      "at": "2026-09-04 09:21:07.694"
+    },
+    "17_landing_usage_control": {
+      "revisionId": "0885a005176a76a3ed7b0e894c9270aa7a3c83f1",
+      "version": 17,
+      "at": "2026-09-04 09:21:07.939"
+    },
+    "18_boundaries": {
+      "revisionId": "517f9152d74097ed1dacce8d4fe69ad5845c880a",
+      "version": 18,
+      "at": "2026-09-04 09:21:08.126"
+    },
+    "19_end": {
+      "revisionId": "84874bea8f091163d03f9f706e32c5b560000c02",
+      "version": 23,
+      "at": "2026-09-04 09:58:45.169"
+    }
+  }
+}

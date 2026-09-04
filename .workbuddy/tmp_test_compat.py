@@ -2,7 +2,7 @@
 import json
 import sys
 
-sys.path.insert(0, r"E:\AI\python\llm-proxy-tk\proxy")
+sys.path.insert(0, r"E:\AI\python\llm-api-gateway\proxy")
 from app import compat
 
 passed = 0

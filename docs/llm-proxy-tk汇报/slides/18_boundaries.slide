@@ -1,0 +1,97 @@
+<Slide>
+  <Box style={{
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    padding: 60,
+    display: 'flex',
+    flexDirection: 'column',
+  }}>
+    <Text style={{
+      fontSize: 14,
+      color: '#0EA5E9',
+      letterSpacing: 2,
+      marginBottom: 8,
+    }}>
+      06 边界
+    </Text>
+    <Text style={{
+      fontSize: 40,
+      fontWeight: 'bold',
+      color: '#1F3A8A',
+      marginBottom: 8,
+    }}>
+      什么它不解决
+    </Text>
+    <Text style={{
+      fontSize: 16,
+      color: '#64748B',
+      marginBottom: 40,
+    }}>
+      诚实的边界 = 可信的产品
+    </Text>
+
+    <Box style={{
+      display: 'flex',
+      flexDirection: 'row',
+      gap: 24,
+      flex: 1,
+    }}>
+      {[
+        {
+          icon: '💰',
+          title: '不做计费充值',
+          desc: '内部用统计就够了',
+          note: '对外卖 token 是另一条路（也不建议做）',
+        },
+        {
+          icon: '🛡️',
+          title: '不做内容安全审核',
+          desc: '违规内容过滤需专门服务',
+          note: '需要时可对接内容审核 API',
+        },
+        {
+          icon: '🏗️',
+          title: '不是高可用集群',
+          desc: '单实例 + SQLite',
+          note: '定位是中小团队内网总闸，不是日均亿级平台',
+        },
+      ].map((item, i) => (
+        <Box key={i} style={{
+          flex: 1,
+          backgroundColor: '#FEF2F2',
+          borderLeft: '6px solid #DC2626',
+          padding: 28,
+          borderRadius: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}>
+          <Text style={{ fontSize: 40 }}>{item.icon}</Text>
+          <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#DC2626' }}>
+            {item.title}
+          </Text>
+          <Text style={{ fontSize: 15, color: '#475569', lineHeight: 1.5 }}>
+            {item.desc}
+          </Text>
+          <Text style={{ fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
+            {item.note}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+
+    <Text style={{
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: '#1F3A8A',
+      textAlign: 'center',
+      marginTop: 32,
+      padding: 20,
+      backgroundColor: '#F8FAFC',
+      borderRadius: 8,
+    }}>
+      它是给"想管好自己人怎么用 AI"的团队用的，<br />不是给"想做 AI 生意"的人用的。
+    </Text>
+  </Box>
+</Slide>
