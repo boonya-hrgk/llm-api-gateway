@@ -21,6 +21,9 @@ from .config import settings
 # 用量聚合支持的统计粒度
 GRANULARITIES = ("day", "week", "month")
 
+# 密钥超过该天数无任何调用（或从未调用且创建超过该天数）→ 派生标记为"不活跃"
+INACTIVE_DAYS = 7
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS upstreams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,6 +45,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     upstream_id INTEGER,
+    owner_id INTEGER,
     created_at TEXT NOT NULL,
     expires_at TEXT,
     last_used_at TEXT,
@@ -89,6 +93,37 @@ def _hash_key(plain: str) -> str:
 def _prefix_of(plain: str) -> str:
     head = plain[:8]
     return f"{head}{'*' * 4}"
+
+
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    """把 ISO 时间字符串解析为 aware datetime；解析失败返回 None。兼容 3.10 不识别末尾 Z。"""
+    if not value:
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        exp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return exp
+
+
+def _expires_in_past(expires_at: Optional[str]) -> bool:
+    """宽松判断密钥过期时间是否已到（派生状态用）；解析失败的字符串不算过期。"""
+    exp = _parse_dt(expires_at)
+    return exp is not None and exp < datetime.now(timezone.utc)
+
+
+def _key_inactive(last_used_at: Optional[str], created_at: Optional[str]) -> bool:
+    """密钥是否"不活跃"：距最近一次使用（未使用则看创建时间）超过 INACTIVE_DAYS 天。"""
+    ref = _parse_dt(last_used_at) or _parse_dt(created_at)
+    if ref is None:
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(days=INACTIVE_DAYS)
+    return ref < cutoff
 
 
 def _models_to_text(models) -> str:
@@ -183,6 +218,14 @@ async def _migrate_db(db) -> None:
         await db.execute(
             "ALTER TABLE api_keys ADD COLUMN key TEXT"
         )
+    if "owner_id" not in cols:
+        # 密钥归属用户：NULL = 系统密钥（仅管理员可见），否则为 admin_users.id
+        await db.execute(
+            "ALTER TABLE api_keys ADD COLUMN owner_id INTEGER"
+        )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id)"
+    )
 
     async with db.execute("PRAGMA table_info(upstreams)") as cur:
         cols = [row[1] for row in await cur.fetchall()]
@@ -233,7 +276,7 @@ async def _ensure_default_upstream(db) -> None:
     )
 
 
-async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id: Optional[int] = None) -> dict:
+async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id: Optional[int] = None, owner_id: Optional[int] = None) -> dict:
     plain = generate_plain_key()
     row = {
         "key_hash": _hash_key(plain),
@@ -242,14 +285,15 @@ async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id
         "name": name,
         "status": "active",
         "upstream_id": upstream_id,
+        "owner_id": owner_id,
         "created_at": _now(),
         "expires_at": expires_at,
     }
     async with aiosqlite.connect(settings.db_file) as db:
         cur = await db.execute(
             """INSERT INTO api_keys
-               (key_hash, key, key_prefix, name, status, upstream_id, created_at, expires_at)
-               VALUES (:key_hash, :key, :key_prefix, :name, :status, :upstream_id, :created_at, :expires_at)""",
+               (key_hash, key, key_prefix, name, status, upstream_id, owner_id, created_at, expires_at)
+               VALUES (:key_hash, :key, :key_prefix, :name, :status, :upstream_id, :owner_id, :created_at, :expires_at)""",
             row,
         )
         await db.commit()
@@ -260,6 +304,7 @@ async def create_key(name: Optional[str], expires_at: Optional[str], upstream_id
         "name": name,
         "status": "active",
         "upstream_id": upstream_id,
+        "owner_id": owner_id,
         "created_at": row["created_at"],
         "expires_at": expires_at,
     }
@@ -277,34 +322,61 @@ async def get_key_by_hash(key_hash: str) -> Optional[dict]:
         return dict(r) if r else None
 
 
-async def list_keys() -> list[dict]:
+async def list_keys(owner_id: Optional[int] = None) -> list[dict]:
+    """密钥列表；owner_id 非空时只返回归属该用户的密钥（NULL owner = 系统密钥仅管理员可见）。"""
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT id, key_prefix, name, status, upstream_id, created_at, expires_at, "
-            "last_used_at, request_count FROM api_keys ORDER BY id DESC"
+        sql = (
+            "SELECT k.id, k.key_prefix, k.name, k.status, k.upstream_id, k.owner_id, "
+            "au.username AS owner_name, k.created_at, k.expires_at, k.last_used_at, k.request_count "
+            "FROM api_keys k LEFT JOIN admin_users au ON au.id = k.owner_id"
         )
+        params: tuple = ()
+        if owner_id is not None:
+            sql += " WHERE k.owner_id = ?"
+            params = (owner_id,)
+        sql += " ORDER BY k.id DESC"
+        cur = await db.execute(sql, params)
         rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["expired"] = d["status"] == "active" and _expires_in_past(d.get("expires_at"))
+            d["inactive"] = d["status"] == "active" and _key_inactive(
+                d.get("last_used_at"), d.get("created_at")
+            )
+            out.append(d)
+        return out
 
 
 async def get_key(key_id: int) -> Optional[dict]:
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, key_prefix, name, status, upstream_id, created_at, expires_at, "
-            "last_used_at, request_count FROM api_keys WHERE id = ?",
+            "SELECT k.id, k.key_prefix, k.name, k.status, k.upstream_id, k.owner_id, "
+            "au.username AS owner_name, k.created_at, k.expires_at, k.last_used_at, k.request_count "
+            "FROM api_keys k LEFT JOIN admin_users au ON au.id = k.owner_id "
+            "WHERE k.id = ?",
             (key_id,),
         )
         r = await cur.fetchone()
-        return dict(r) if r else None
+        if not r:
+            return None
+        d = dict(r)
+        d["expired"] = d["status"] == "active" and _expires_in_past(d.get("expires_at"))
+        d["inactive"] = d["status"] == "active" and _key_inactive(
+            d.get("last_used_at"), d.get("created_at")
+        )
+        return d
 
 
 async def get_key_full(key_id: int) -> Optional[dict]:
+    """含明文 key 的记录（回显用）；不联查归属用户名，owner_id 已足够做归属校验。"""
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT id, key, key_prefix, name, status, upstream_id FROM api_keys WHERE id = ?",
+            "SELECT id, key, key_prefix, name, status, upstream_id, owner_id "
+            "FROM api_keys WHERE id = ?",
             (key_id,),
         )
         r = await cur.fetchone()
@@ -339,7 +411,7 @@ async def reset_key(key_id: int) -> Optional[dict]:
         if cur.rowcount == 0:
             return None
         cur = await db.execute(
-            "SELECT id, key, key_prefix, name, status, upstream_id, created_at, expires_at "
+            "SELECT id, key, key_prefix, name, status, upstream_id, owner_id, created_at, expires_at "
             "FROM api_keys WHERE id = ?",
             (key_id,),
         )
@@ -494,6 +566,10 @@ async def update_admin_password(user_id: int, password: str) -> bool:
 
 async def delete_admin_user(user_id: int) -> bool:
     async with aiosqlite.connect(settings.db_file) as db:
+        # 该用户名下的密钥改回"系统密钥"，避免悬空归属（仍可由管理员重新分配）
+        await db.execute(
+            "UPDATE api_keys SET owner_id = NULL WHERE owner_id = ?", (user_id,)
+        )
         cur = await db.execute("DELETE FROM admin_users WHERE id = ?", (user_id,))
         await db.commit()
         return cur.rowcount > 0
@@ -574,31 +650,35 @@ def _period_series(start_day, end_day, granularity: str) -> list[dict]:
     return out
 
 
-async def _fetch_daily_aggregates(start_date: str) -> list[dict]:
-    """拉取窗口内按自然日聚合的原始计数与 token，供上层桶化复用。"""
+async def _fetch_daily_aggregates(start_date: str, owner_id: Optional[int] = None) -> list[dict]:
+    """拉取窗口内按自然日聚合的原始计数与 token，供上层桶化复用。
+
+    owner_id 非空时仅统计该用户名下密钥产生的用量（NULL = 全量，管理员视角）。
+    """
     async with aiosqlite.connect(settings.db_file) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT date_str, COUNT(*) AS cnt,
-                      COALESCE(SUM(input_tokens), 0) AS itok,
-                      COALESCE(SUM(output_tokens), 0) AS otok,
-                      COALESCE(SUM(cache_read_tokens), 0) AS ctok
-               FROM usage_logs
-               WHERE date_str >= ?
-               GROUP BY date_str""",
-            (start_date,),
+            """SELECT l.date_str, COUNT(*) AS cnt,
+                      COALESCE(SUM(l.input_tokens), 0) AS itok,
+                      COALESCE(SUM(l.output_tokens), 0) AS otok,
+                      COALESCE(SUM(l.cache_read_tokens), 0) AS ctok
+               FROM usage_logs l
+               WHERE l.date_str >= ?
+                 AND (? IS NULL OR l.key_id IN (SELECT id FROM api_keys WHERE owner_id = ?))
+               GROUP BY l.date_str""",
+            (start_date, owner_id, owner_id),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_usage_trend(days: int = 7, granularity: str = "day") -> list[dict]:
-    """按粒度返回趋势序列（补零到完整周期）。"""
+async def get_usage_trend(days: int = 7, granularity: str = "day", owner_id: Optional[int] = None) -> list[dict]:
+    """按粒度返回趋势序列（补零到完整周期）；owner_id 非空时仅统计该用户名下密钥。"""
     if granularity not in GRANULARITIES:
         granularity = "day"
     end_day = _d_from(_utc_today())
     start_day = end_day - timedelta(days=days - 1)
-    daily = await _fetch_daily_aggregates(start_day.isoformat())
+    daily = await _fetch_daily_aggregates(start_day.isoformat(), owner_id=owner_id)
 
     # 逐日聚合 → 桶聚合
     bucket_agg: dict[str, list[int]] = {}
@@ -627,9 +707,9 @@ async def get_usage_trend(days: int = 7, granularity: str = "day") -> list[dict]
 
 
 async def get_usage_by_key(
-    days: int = 30, granularity: str = "day", limit: int = 10
+    days: int = 30, granularity: str = "day", limit: int = 10, owner_id: Optional[int] = None
 ) -> list[dict]:
-    """窗口内按密钥聚合的用量排行（含 token 汇总）。"""
+    """窗口内按密钥聚合的用量排行（含 token 汇总）；owner_id 非空时仅统计其名下密钥。"""
     if granularity not in GRANULARITIES:
         granularity = "day"
     end_day = _d_from(_utc_today())
@@ -645,23 +725,24 @@ async def get_usage_by_key(
                FROM usage_logs l
                LEFT JOIN api_keys k ON k.id = l.key_id
                WHERE l.date_str >= ?
+                 AND (? IS NULL OR k.owner_id = ?)
                GROUP BY l.key_id
                ORDER BY call_count DESC
                LIMIT ?""",
-            (start_day.isoformat(), limit),
+            (start_day.isoformat(), owner_id, owner_id, limit),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_usage_matrix(days: int = 7, granularity: str = "day") -> dict:
+async def get_usage_matrix(days: int = 7, granularity: str = "day", owner_id: Optional[int] = None) -> dict:
     """密钥 × 周期 的每日/每周/每月用量矩阵。
 
     返回结构：{granularity, days, periods: [{start,end,label}...],
     rows: [{key_id, key_prefix, key_name, total_calls, input_tokens, output_tokens,
             cache_read_tokens, cells: [{count, input_tokens, output_tokens,
             cache_read_tokens}...]}...]}
-    cells 与 periods 一一对应（无调用记 0）。
+    cells 与 periods 一一对应（无调用记 0）。owner_id 非空时仅统计其名下密钥。
     """
     if granularity not in GRANULARITIES:
         granularity = "day"
@@ -680,9 +761,10 @@ async def get_usage_matrix(days: int = 7, granularity: str = "day") -> dict:
                       COALESCE(SUM(l.cache_read_tokens), 0) AS ctok
                FROM usage_logs l
                WHERE l.date_str >= ?
+                 AND (? IS NULL OR l.key_id IN (SELECT id FROM api_keys WHERE owner_id = ?))
                GROUP BY l.key_id, l.date_str
                ORDER BY l.key_id ASC, l.date_str ASC""",
-            (start_day.isoformat(),),
+            (start_day.isoformat(), owner_id, owner_id),
         )
         rows = await cur.fetchall()
 
@@ -960,3 +1042,56 @@ async def rename_key(key_id: int, name: Optional[str]) -> bool:
         )
         await db.commit()
         return cur.rowcount > 0
+
+
+async def set_key_owner(key_id: int, owner_id: Optional[int]) -> bool:
+    """转移/解除密钥归属：owner_id = 用户 id（普通用户）或 None（系统密钥，仅管理员可见）。"""
+    async with aiosqlite.connect(settings.db_file) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET owner_id = ? WHERE id = ?",
+            (owner_id, key_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_upstreams_for_user(user_id: int) -> list[dict]:
+    """返回某用户（普通用户）在对话页可用的上游：其名下密钥绑定过的上游，
+    以及当其任一密钥未绑定上游时默认上游（未绑定走默认）。"""
+    async with aiosqlite.connect(settings.db_file) as db:
+        db.row_factory = aiosqlite.Row
+        ids: list[int] = []
+        cur = await db.execute(
+            "SELECT DISTINCT upstream_id FROM api_keys "
+            "WHERE owner_id = ? AND upstream_id IS NOT NULL",
+            (user_id,),
+        )
+        for r in await cur.fetchall():
+            if r[0] is not None and r[0] not in ids:
+                ids.append(r[0])
+
+        # 用户存在未绑定上游的密钥时，其流量走默认上游 → 一并算作用户可用
+        cur = await db.execute(
+            "SELECT 1 FROM api_keys WHERE owner_id = ? AND upstream_id IS NULL LIMIT 1",
+            (user_id,),
+        )
+        uses_default = await cur.fetchone() is not None
+        if uses_default:
+            cur = await db.execute(
+                "SELECT id FROM upstreams WHERE is_default = 1 LIMIT 1"
+            )
+            row = await cur.fetchone()
+            if row and row[0] not in ids:
+                ids.append(row[0])
+
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        cur = await db.execute(
+            f"SELECT id, name, base_url, api_key, protocol, models, is_default, "
+            f"inject_include_usage, created_at FROM upstreams "
+            f"WHERE id IN ({placeholders}) ORDER BY is_default DESC, id ASC",
+            tuple(ids),
+        )
+        rows = await cur.fetchall()
+        return [_upstream_row(r) for r in rows]

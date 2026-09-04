@@ -12,10 +12,15 @@ class KeyCreateRequest(BaseModel):
         default=None, description="可选过期时间，ISO8601 字符串"
     )
     upstream_id: Optional[int] = Field(default=None, description="绑定的上游 ID，不填则使用默认上游")
+    owner_id: Optional[int] = Field(default=None, description="归属用户 ID（普通用户），不填=系统密钥仅管理员可见")
 
 
 class KeyRenameRequest(BaseModel):
     name: Optional[str] = Field(default=None, description="新的密钥备注名，空表示未命名")
+
+
+class KeyOwnerRequest(BaseModel):
+    owner_id: Optional[int] = Field(default=None, description="归属用户 ID（普通用户）；null/不填=解除归属（系统密钥）")
 
 
 class KeyCreatedResponse(BaseModel):
@@ -24,6 +29,7 @@ class KeyCreatedResponse(BaseModel):
     name: Optional[str] = None
     status: str
     upstream_id: Optional[int] = None
+    owner_id: Optional[int] = None
     created_at: str
     expires_at: Optional[str] = None
 
@@ -33,7 +39,11 @@ class KeyListItem(BaseModel):
     key_prefix: str
     name: Optional[str] = None
     status: str
+    expired: bool = Field(default=False, description="活跃密钥是否已过过期时间（派生状态，不落库）")
+    inactive: bool = Field(default=False, description="活跃密钥是否超过 7 天未使用（派生状态，不落库）")
     upstream_id: Optional[int] = None
+    owner_id: Optional[int] = None
+    owner_name: Optional[str] = None
     created_at: str
     expires_at: Optional[str] = None
     last_used_at: Optional[str] = None

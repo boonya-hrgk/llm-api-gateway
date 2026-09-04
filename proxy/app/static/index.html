@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Gateway 授权管理系统</title>
-  <link rel="stylesheet" href="/styles.css?v=20260903q" />
+  <link rel="stylesheet" href="/styles.css?v=20260904e" />
 </head>
 <body>
   <!-- 登录视图 -->
@@ -153,8 +153,8 @@
           </div>
           <div class="table-wrap">
             <table class="table">
-              <thead><tr><th>ID</th><th>前缀</th><th>名称</th><th>上游</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th>调用次数</th><th class="admin-only">操作</th></tr></thead>
-              <tbody id="keys-tbody"><tr><td colspan="10" class="muted">加载中…</td></tr></tbody>
+              <thead><tr><th>ID</th><th>前缀</th><th>名称</th><th>上游</th><th class="admin-only">归属</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th>调用次数</th><th class="admin-only">操作</th></tr></thead>
+              <tbody id="keys-tbody"><tr><td colspan="11" class="muted">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -267,8 +267,18 @@
           </select>
           <span class="field-hint">不选则使用默认上游</span>
         </label>
+        <label class="field"><span>归属用户</span>
+          <select id="create-owner">
+            <option value="">不归属（系统密钥，仅管理员可见）</option>
+          </select>
+          <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
+        </label>
         <label class="field"><span>过期时间（可选，留空为永不过期）</span>
-          <input type="datetime-local" id="create-expires" />
+          <div class="datetime-row">
+            <input type="date" id="create-expires-date" title="选择过期日期" />
+            <input type="time" id="create-expires-time" title="选择过期时刻（默认当天 23:59）" />
+            <button type="button" class="btn btn-ghost btn-sm" id="create-expires-clear" title="清除过期时间" hidden>清除</button>
+          </div>
         </label>
       </div>
       <div class="modal-foot">
@@ -296,6 +306,30 @@
       <div class="modal-foot">
         <button class="btn btn-ghost" data-close>取消</button>
         <button class="btn btn-primary" id="key-rename-submit">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置/转移密钥归属模态框 -->
+  <div id="modal-key-owner" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="card-head"><h3>设置密钥归属</h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="key-owner-id" />
+        <div class="field"><span>密钥</span>
+          <code id="key-owner-prefix" class="muted-key"></code>
+        </div>
+        <label class="field"><span>归属用户</span>
+          <select id="key-owner">
+            <option value="">不归属（系统密钥，仅管理员可见）</option>
+          </select>
+          <span class="field-hint">归属给某普通用户后，该用户登录仅能看到/测试自己名下的密钥</span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close>取消</button>
+        <button class="btn btn-primary" id="key-owner-submit">保存</button>
       </div>
     </div>
   </div>
@@ -334,7 +368,7 @@
         </label>
         <label class="field"><span>角色</span>
           <select id="user-role">
-            <option value="viewer">查看者（viewer）</option>
+            <option value="viewer">普通用户</option>
             <option value="admin">管理员（admin）</option>
           </select>
         </label>
@@ -397,6 +431,6 @@
   <script src="/vendor/marked.min.js?v=20260903q"></script>
   <script src="/vendor/highlight.min.js?v=20260903q"></script>
   <script src="/vendor/purify.min.js?v=20260903q"></script>
-  <script src="/app.js?v=20260903q"></script>
+  <script src="/app.js?v=20260904e"></script>
 </body>
 </html>

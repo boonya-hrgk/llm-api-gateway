@@ -50,7 +50,7 @@ function showApp() {
   document.getElementById("app-view").hidden = false;
   applyRoleVisibility();
   refreshUserInfo();
-  switchView("overview");
+  switchView(defaultView());
   refreshAll();
 }
 function logout() {
@@ -112,14 +112,32 @@ if (sessionStorage.getItem("cache_cleared_toast") === "1") {
 }
 
 /* ===== 权限控制 ===== */
+// 每个菜单允许的角色；普通用户只能看到 用量统计 / 对话测试
+const ROLE_VIEWS = {
+  overview: ["admin"],
+  stats: ["admin", "viewer"],
+  keys: ["admin"],
+  upstreams: ["admin"],
+  users: ["admin"],
+  chat: ["admin", "viewer"],
+};
+function viewAllowed(view) {
+  const roles = ROLE_VIEWS[view];
+  if (!roles) return true;
+  return roles.indexOf(getCurrentUser()?.role) >= 0;
+}
+function defaultView() {
+  return isAdmin() ? "overview" : "stats";
+}
 function applyRoleVisibility() {
-  const adminOnly = document.querySelectorAll(".admin-only");
-  adminOnly.forEach((el) => {
-    if (isAdmin()) {
-      el.style.display = "";
-    } else {
-      el.style.display = "none";
-    }
+  const admin = isAdmin();
+  // 按钮 / 列等细粒度元素
+  document.querySelectorAll(".admin-only").forEach((el) => {
+    el.style.display = admin ? "" : "none";
+  });
+  // 左侧菜单按角色显隐
+  document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
+    el.style.display = viewAllowed(el.dataset.view) ? "" : "none";
   });
 }
 
@@ -127,7 +145,7 @@ function refreshUserInfo() {
   const user = getCurrentUser();
   if (!user) return;
   document.getElementById("user-name").textContent = user.username;
-  document.getElementById("user-role").textContent = user.role === "admin" ? "管理员" : "查看者";
+  document.getElementById("user-role").textContent = user.role === "admin" ? "管理员" : "普通用户";
   document.getElementById("user-avatar").textContent = user.username.charAt(0).toUpperCase();
 }
 
@@ -141,9 +159,9 @@ const TITLES = {
   chat: "对话测试",
 };
 function switchView(name) {
-  if ((name === "users" || name === "upstreams") && !isAdmin()) {
+  if (!viewAllowed(name)) {
     toast("权限不足", "error");
-    name = "overview";
+    name = defaultView();
   }
   document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
     el.classList.toggle("active", el.dataset.view === name);
@@ -199,11 +217,22 @@ function badge(status) {
   const text = status === "active" ? "活跃" : "已吊销";
   return '<span class="badge ' + cls + '">' + text + "</span>";
 }
+// 状态列（派生状态，DB 仍是 active，重置/吊销等操作不受影响）：
+// 已过期 → 不活跃（>7 天未使用）→ 按 DB 状态显示
+function keyStateBadge(k) {
+  if (k && k.expired) {
+    return '<span class="badge badge-expired" title="已超过设置的过期时间，调用将被网关拒绝">已过期</span>';
+  }
+  if (k && k.inactive) {
+    return '<span class="badge badge-inactive" title="超过 7 天未使用，密钥仍可正常使用">不活跃</span>';
+  }
+  return badge(k && k.status);
+}
 function roleBadge(role) {
   if (role === "admin") {
     return '<span class="badge" style="background: rgba(99,102,241,.15); color: var(--primary);">管理员</span>';
   }
-  return '<span class="badge" style="background: rgba(148,163,184,.15); color: var(--text-dim);">查看者</span>';
+  return '<span class="badge" style="background: rgba(148,163,184,.15); color: var(--text-dim);">普通用户</span>';
 }
 
 /* ===== 概览数据 ===== */
@@ -215,10 +244,32 @@ async function loadUpstreams() {
     if (!res.ok) throw new Error("加载失败");
     const data = await res.json();
     _upstreamsCache = data;
-    renderUpstreams(data);
+    // 上游管理表仅管理员渲染；普通用户这里拿到的只是裁剪后的“可达上游”，用于对话模型候选
+    if (isAdmin()) renderUpstreams(data);
     updateChatModelList();
     return data;
   } catch (e) { return []; }
+}
+
+/* ===== 归属用户下拉（管理员新建/转移密钥归属用） ===== */
+async function populateOwnerOptions(sel, selectedId) {
+  // 保留第一个“不归属（系统密钥）”占位选项
+  const placeholder = sel.options[0];
+  sel.replaceChildren();
+  if (placeholder) sel.appendChild(placeholder);
+  let users = [];
+  try {
+    const res = await api("/admin/users");
+    if (res.ok) users = await res.json();
+  } catch (e) { /* 拉取失败则仅剩占位选项 */ }
+  users.forEach((u) => {
+    if (u.role !== "viewer") return;
+    const opt = document.createElement("option");
+    opt.value = u.id;
+    opt.textContent = u.username + "（普通用户）";
+    if (String(u.id) === String(selectedId)) opt.selected = true;
+    sel.appendChild(opt);
+  });
 }
 
 /* ===== 对话测试页 模型下拉（自定义 Combobox） =====
@@ -278,9 +329,15 @@ function modelMenuRender(filterByInput = true) {
     const p = document.createElement("div");
     p.className = "model-menu-empty";
     const selected = Boolean(currentChatKeyId());
-    p.textContent = selected
-      ? "当前密钥所属上游未配置模型，可到上游管理添加，或直接输入模型名"
-      : "暂无可选模型：在上游管理中配置模型后即会出现在这里，也可以直接输入模型名";
+    if (isAdmin()) {
+      p.textContent = selected
+        ? "当前密钥所属上游未配置模型，可到上游管理添加，或直接输入模型名"
+        : "暂无可选模型：在上游管理中配置模型后即会出现在这里，也可以直接输入模型名";
+    } else {
+      p.textContent = selected
+        ? "当前密钥所属上游未配置模型，可直接输入模型名"
+        : "暂无可用模型（请先选择名下密钥，或直接输入模型名）";
+    }
     menu.appendChild(p);
   } else if (!list.length) {
     const p = document.createElement("div");
@@ -425,7 +482,7 @@ function renderOverview(keys) {
   if (!keys.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无密钥</td></tr>'; return; }
   tb.innerHTML = keys.slice(0, 5).map((k) =>
     "<tr><td>" + esc(k.key_prefix) + "</td><td>" + esc(k.name || "—") +
-    "</td><td>" + badge(k.status) + "</td><td>" + (k.request_count || 0) +
+    "</td><td>" + keyStateBadge(k) + "</td><td>" + (k.request_count || 0) +
     "</td><td>" + fmtTime(k.created_at) + "</td></tr>"
   ).join("");
 }
@@ -435,17 +492,23 @@ function renderKeys(keys) {
   const admin = isAdmin();
   _keysCache = keys;
   if (!keys.length) {
-    const cols = admin ? 10 : 9;
+    const cols = admin ? 11 : 9;
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="muted">暂无密钥</td></tr>';
     return;
   }
   tb.innerHTML = keys.map((k) => {
+    const ownerHtml = k.owner_name
+      ? esc(k.owner_name) + ' <span class="muted">#' + k.owner_id + "</span>"
+      : '<span class="muted">系统</span>';
     let html = "<tr><td>" + k.id + "</td><td>" + esc(k.key_prefix) + "</td><td>" + esc(k.name || "—") +
-      "</td><td>" + esc(getUpstreamName(k.upstream_id)) + "</td><td>" + badge(k.status) + "</td><td>" + fmtTime(k.created_at) +
+      "</td><td>" + esc(getUpstreamName(k.upstream_id)) + "</td>" +
+      '<td class="admin-only">' + ownerHtml + "</td>" +
+      "<td>" + keyStateBadge(k) + "</td><td>" + fmtTime(k.created_at) +
       "</td><td>" + fmtTime(k.expires_at) + "</td><td>" + fmtTime(k.last_used_at) +
       "</td><td>" + (k.request_count || 0) + "</td>";
     if (admin) {
       html += '<td>' +
+        '<button class="btn btn-ghost btn-sm" data-owner-key="' + k.id + '" title="设置/转移密钥归属用户">归属</button>' +
         '<button class="btn btn-ghost btn-sm" data-edit-key="' + k.id + '" title="修改备注名称">编辑</button>' +
         (k.status === "active"
           ? '<button class="btn btn-ghost btn-sm" data-reset="' + k.id + '" title="生成新密钥替换旧值，旧 key 立即失效">重置</button>' +
@@ -456,6 +519,9 @@ function renderKeys(keys) {
     return html;
   }).join("");
 
+  tb.querySelectorAll("[data-owner-key]").forEach((btn) => {
+    btn.addEventListener("click", () => openSetOwner(parseInt(btn.dataset.ownerKey, 10)));
+  });
   tb.querySelectorAll("[data-edit-key]").forEach((btn) => {
     btn.addEventListener("click", () => openRenameKey(parseInt(btn.dataset.editKey, 10)));
   });
@@ -468,8 +534,10 @@ function renderKeys(keys) {
 }
 
 async function refreshAll() {
+  // 普通用户无系统概览/密钥管理页，概览与密钥表的加载仅管理员需要
+  if (!isAdmin()) return;
   await loadOverview();
-  if (isAdmin()) await loadUpstreams();
+  await loadUpstreams();
   const keys = await loadKeys();
   renderOverview(keys);
   renderKeys(keys);
@@ -490,7 +558,9 @@ document.querySelectorAll(".modal-mask").forEach((el) => {
 
 document.getElementById("create-key-btn").addEventListener("click", async () => {
   document.getElementById("create-name").value = "";
-  document.getElementById("create-expires").value = "";
+  document.getElementById("create-expires-date").value = "";
+  document.getElementById("create-expires-time").value = "";
+  updateExpiresClearBtn();
   const sel = document.getElementById("create-upstream");
   sel.innerHTML = '<option value="">默认上游</option>';
   _upstreamsCache.forEach((u) => {
@@ -499,22 +569,43 @@ document.getElementById("create-key-btn").addEventListener("click", async () => 
     opt.textContent = u.name + (u.is_default ? " (默认)" : "");
     sel.appendChild(opt);
   });
+  const ownerSel = document.getElementById("create-owner");
+  ownerSel.innerHTML = '<option value="">不归属（系统密钥，仅管理员可见）</option>';
+  await populateOwnerOptions(ownerSel, "");
   openModal("modal-create");
+});
+
+/* 过期时间的日期/时间双框：有日期才显示"清除"，清除后置空 */
+function updateExpiresClearBtn() {
+  const clearBtn = document.getElementById("create-expires-clear");
+  const hasDate = !!document.getElementById("create-expires-date").value;
+  if (clearBtn) clearBtn.hidden = !hasDate;
+}
+document.getElementById("create-expires-date").addEventListener("change", updateExpiresClearBtn);
+document.getElementById("create-expires-clear").addEventListener("click", () => {
+  document.getElementById("create-expires-date").value = "";
+  document.getElementById("create-expires-time").value = "";
+  updateExpiresClearBtn();
 });
 
 document.getElementById("create-submit").addEventListener("click", async () => {
   const name = document.getElementById("create-name").value.trim() || null;
-  let expires = document.getElementById("create-expires").value.trim() || null;
-  const upstreamId = document.getElementById("create-upstream").value;
-  if (expires) {
-    // datetime-local 的 value 形如 "2026-12-31T23:59"，补秒后按本地时区解析再转 UTC 存储
-    const d = new Date(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(expires) ? expires + ":00" : expires);
+  const dateVal = document.getElementById("create-expires-date").value.trim();
+  const timeVal = document.getElementById("create-expires-time").value.trim();
+  let expires = null;
+  if (dateVal) {
+    // date/time 均按浏览器本地时区解析；仅选日期未选时间则默认当天 23:59
+    const d = new Date(dateVal + "T" + (timeVal || "23:59"));
     if (isNaN(d)) { toast("过期时间格式无效", "error"); return; }
-    expires = d.toISOString();
+    // 存为 +00:00 形式的 UTC，兼容 Python 3.10 的 datetime.fromisoformat（不识别末尾 Z）
+    expires = d.toISOString().replace(/Z$/, "+00:00");
   }
+  const upstreamId = document.getElementById("create-upstream").value;
   try {
     const body = { name, expires_at: expires };
     if (upstreamId) body.upstream_id = parseInt(upstreamId, 10);
+    const ownerId = document.getElementById("create-owner").value;
+    if (ownerId) body.owner_id = parseInt(ownerId, 10);
     const res = await api("/admin/keys", {
       method: "POST",
       body: JSON.stringify(body),
@@ -608,6 +699,39 @@ document.getElementById("key-rename-submit").addEventListener("click", async () 
     closeModal("modal-key-rename");
     toast("名称已更新", "success");
     refreshAll();
+  } catch (e) { toast("保存失败：" + e.message, "error"); }
+});
+
+/* ===== 设置/转移密钥归属 ===== */
+function openSetOwner(keyId) {
+  const k = _keysCache.find((x) => x.id === keyId);
+  if (!k) return;
+  document.getElementById("key-owner-id").value = k.id;
+  document.getElementById("key-owner-prefix").textContent = k.key_prefix;
+  const sel = document.getElementById("key-owner");
+  sel.innerHTML = '<option value="">不归属（系统密钥，仅管理员可见）</option>';
+  populateOwnerOptions(sel, k.owner_id);
+  openModal("modal-key-owner");
+}
+
+document.getElementById("key-owner-submit").addEventListener("click", async () => {
+  const id = parseInt(document.getElementById("key-owner-id").value, 10);
+  if (!id) return;
+  const ownerVal = document.getElementById("key-owner").value;
+  const ownerId = ownerVal ? parseInt(ownerVal, 10) : null;
+  try {
+    const res = await api("/admin/keys/" + id + "/owner", {
+      method: "PATCH",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+    if (res.ok) {
+      closeModal("modal-key-owner");
+      toast("归属已更新", "success");
+      refreshAll();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast(err.detail || ("保存失败 (" + res.status + ")"), "error");
+    }
   } catch (e) { toast("保存失败：" + e.message, "error"); }
 });
 
@@ -1284,7 +1408,8 @@ async function loadChatKeys() {
   if (!sel) return;
   const keys = await loadKeys();
   _chatKeysCache = keys;
-  const activeKeys = keys.filter((k) => k.status === "active");
+  // 已过期密钥不可再调用，不出现在对话可选列表
+  const activeKeys = keys.filter((k) => k.status === "active" && !k.expired);
   sel.innerHTML = '<option value="">请选择密钥</option>';
   activeKeys.forEach((k) => {
     const opt = document.createElement("option");
@@ -1356,17 +1481,21 @@ document.getElementById("chat-key").addEventListener("change", async (e) => {
       const errData = await res.json().catch(() => ({}));
       let msg = errData.detail || ("加载失败 (" + res.status + ")");
       if (res.status === 410) {
-        // 历史遗留密钥无明文：给出可操作的引导，避免死胡同
-        msg = "该密钥无明文可回显（创建于明文回显功能上线之前或数据重建过）。";
+        // 历史遗留密钥无明文：管理员可去重置；普通用户无权管理密钥，引导联系管理员
+        const base = "该密钥无明文可回显（创建于明文回显功能上线之前或数据重建过）。";
         errEl.innerHTML = "";
-        errEl.append("⚠ 密钥加载失败：" + msg);
-        const go = document.createElement("button");
-        go.type = "button";
-        go.className = "btn btn-ghost btn-sm";
-        go.textContent = "去密钥管理重置";
-        go.style.marginLeft = "8px";
-        go.addEventListener("click", () => switchView("keys"));
-        errEl.appendChild(go);
+        if (isAdmin()) {
+          errEl.append("⚠ 密钥加载失败：" + base);
+          const go = document.createElement("button");
+          go.type = "button";
+          go.className = "btn btn-ghost btn-sm";
+          go.textContent = "去密钥管理重置";
+          go.style.marginLeft = "8px";
+          go.addEventListener("click", () => switchView("keys"));
+          errEl.appendChild(go);
+        } else {
+          errEl.append("⚠ 密钥加载失败：" + base + " 请联系管理员重置密钥后重新分配给你。");
+        }
         errEl.hidden = false;
         return;
       }

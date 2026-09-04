@@ -85,6 +85,19 @@ def _parse_bearer(authorization: str | None) -> str:
     return parts[1].strip()
 
 
+def _parse_expires_at(value: str) -> datetime:
+    """解析存储的过期时间字符串。
+
+    兼容旧数据 / 部分前端以 ISO 带 'Z' 的 UTC 形式（如 2026-12-31T23:59:00.000Z）写入的情况：
+    Python 3.10 的 datetime.fromisoformat 不识别末尾 'Z'，先规范为 '+00:00' 再解析。
+    调用方负责捕获 ValueError。
+    """
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
 async def verify_api_key(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
@@ -107,7 +120,7 @@ async def verify_api_key(
     expires_at = record.get("expires_at")
     if expires_at:
         try:
-            exp = datetime.fromisoformat(expires_at)
+            exp = _parse_expires_at(expires_at)
             if exp.tzinfo is None:
                 exp = exp.replace(tzinfo=timezone.utc)
             if exp < datetime.now(timezone.utc):
