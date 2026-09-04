@@ -7,6 +7,8 @@
           <value>
             <TabSessionState>
               <option name="provider" value="claude" />
+              <option name="sessionId" value="305c82b7-365e-42be-ae09-b4c1f54db252" />
+              <option name="cwd" value="E:\AI\python\llm-api-gateway" />
               <option name="model" value="claude-sonnet-5[1m]" />
               <option name="permissionMode" value="bypassPermissions" />
             </TabSessionState>

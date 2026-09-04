@@ -30,12 +30,11 @@
       gap: 12,
     }}>
       {[
-        { num: '01', title: '背景：为什么需要"总闸门"', desc: '企业用大模型的三个扎心现状' },
-        { num: '02', title: '定位：自用网关，不卖算力', desc: '明确边界与项目价值定位' },
-        { num: '03', title: '项目与架构：llm-api-gateway 一览', desc: '是什么、长什么样、能干什么' },
-        { num: '04', title: '企业 AI 应用场景', desc: '内网-自有大模型 vs 外网-云端大模型' },
-        { num: '05', title: '企业 AI 应用落地', desc: '5 个关键抓手，让网关从"装上"到"用顺"' },
-        { num: '06', title: '边界与展望', desc: '诚实的边界 = 可信的产品' },
+        { num: '01', title: '背景与定位', desc: '三个"裸奔"现状 · 自用网关，不卖算力' },
+        { num: '02', title: '项目与架构：llm-api-gateway 一览', desc: '是什么 · 长什么样 · 能干什么' },
+        { num: '03', title: '企业 AI 应用场景', desc: '内网-自有大模型 vs 外网-云端大模型' },
+        { num: '04', title: '企业 AI 应用落地', desc: '5 个关键抓手，让网关从"装上"到"用顺"' },
+        { num: '05', title: '边界与展望', desc: '诚实的边界 = 可信的产品' },
       ].map((item, idx) => (
         <Box key={idx} style={{
           display: 'flex',
